@@ -1,0 +1,21 @@
+{
+  "name": "aipickd-pipeline",
+  "version": "1.0.0",
+  "description": "AIPickd autonomous AI affiliate blog pipeline",
+  "private": true,
+  "scripts": {
+    "pipeline": "node scripts/run-pipeline.js",
+    "long": "node scripts/generate-long-article.js",
+    "forever": "node scripts/generate-forever.js",
+    "health": "node scripts/health-check.js",
+    "monitor": "node scripts/monitor-site.js",
+    "dashboard": "node scripts/generate-dashboard.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "nodemailer": "^8.0.5",
+    "playwright": "^1.59.1"
+  }
+}

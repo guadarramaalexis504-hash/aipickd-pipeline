@@ -1,0 +1,35 @@
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+node_modules/
+.DS_Store
+Thumbs.db
+credentials/
+secrets/
+
+# Logs (don't commit local generation logs)
+logs/
+*.log
+
+# Local artifacts
+dashboard.html
+.cache/
+tmp/
+RESUMEN-*.md
+
+# Sensitive local docs with credentials (never commit)
+CREDENCIALES*.md
+QUICKSTART.md
+DONE.md
+ESTADO-FINAL.md
+ESTADO.md
+SIGUIENTE-PASO.md
+MAÑANA.md
+MANANA.md
+ROADMAP-MEJORAS.md
+n8n/CREDENCIALES*.md
+n8n/workflows/README.md
+n8n/workflows/
+docs/proximos-pasos-afiliados.md

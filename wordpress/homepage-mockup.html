@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AIPickd — Honest AI Tool Reviews & Comparisons</title>
+<meta name="description" content="Honest reviews and side-by-side comparisons of the best AI tools for marketers, developers, and small businesses in 2026. No fluff. Real tradeoffs.">
+<style>
+  :root {
+    --primary: #6366f1;
+    --primary-dark: #4f46e5;
+    --accent: #10b981;
+    --bg: #ffffff;
+    --surface: #f8fafc;
+    --text: #0f172a;
+    --text-muted: #64748b;
+    --border: #e2e8f0;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    color: var(--text);
+    background: var(--bg);
+    line-height: 1.6;
+  }
+  a { color: var(--primary); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  .container { max-width: 1200px; margin: 0 auto; padding: 0 24px; }
+
+  /* Header */
+  header {
+    padding: 20px 0;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+  .header-inner {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .logo {
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--text);
+  }
+  .logo span { color: var(--primary); }
+  nav ul {
+    list-style: none;
+    display: flex;
+    gap: 32px;
+  }
+  nav a {
+    color: var(--text);
+    font-weight: 500;
+    font-size: 15px;
+  }
+
+  /* Hero */
+  .hero {
+    padding: 80px 0 60px;
+    text-align: center;
+    background: linear-gradient(180deg, var(--surface) 0%, var(--bg) 100%);
+  }
+  .hero h1 {
+    font-size: 52px;
+    font-weight: 800;
+    line-height: 1.1;
+    margin-bottom: 20px;
+    letter-spacing: -1px;
+  }
+  .hero h1 span { color: var(--primary); }
+  .hero p {
+    font-size: 20px;
+    color: var(--text-muted);
+    max-width: 700px;
+    margin: 0 auto 32px;
+  }
+  .hero-cta {
+    display: inline-block;
+    background: var(--primary);
+    color: white;
+    padding: 14px 32px;
+    border-radius: 8px;
+    font-weight: 600;
+    font-size: 16px;
+    transition: background 0.2s;
+  }
+  .hero-cta:hover { background: var(--primary-dark); text-decoration: none; }
+
+  .trust-badges {
+    margin-top: 40px;
+    display: flex;
+    justify-content: center;
+    gap: 40px;
+    flex-wrap: wrap;
+    color: var(--text-muted);
+    font-size: 14px;
+  }
+  .trust-badges div { display: flex; align-items: center; gap: 8px; }
+
+  /* Categories grid */
+  .section { padding: 80px 0; }
+  .section-title {
+    text-align: center;
+    font-size: 36px;
+    margin-bottom: 12px;
+    font-weight: 700;
+  }
+  .section-subtitle {
+    text-align: center;
+    color: var(--text-muted);
+    margin-bottom: 48px;
+    font-size: 17px;
+  }
+
+  .categories {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 20px;
+  }
+  .category-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 28px 24px;
+    transition: all 0.2s;
+    cursor: pointer;
+  }
+  .category-card:hover {
+    border-color: var(--primary);
+    transform: translateY(-2px);
+    box-shadow: 0 10px 30px rgba(99, 102, 241, 0.1);
+  }
+  .category-icon { font-size: 32px; margin-bottom: 12px; }
+  .category-card h3 { font-size: 18px; margin-bottom: 8px; }
+  .category-card p { color: var(--text-muted); font-size: 14px; }
+
+  /* Featured articles */
+  .featured { background: var(--surface); }
+  .articles-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 24px;
+  }
+  .article-card {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    transition: all 0.2s;
+  }
+  .article-card:hover {
+    border-color: var(--primary);
+    transform: translateY(-2px);
+  }
+  .article-image {
+    height: 180px;
+    background: linear-gradient(135deg, var(--primary), var(--accent));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 18px;
+    font-weight: 600;
+    padding: 20px;
+    text-align: center;
+  }
+  .article-content { padding: 24px; }
+  .article-tag {
+    display: inline-block;
+    background: rgba(99, 102, 241, 0.1);
+    color: var(--primary);
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    margin-bottom: 12px;
+  }
+  .article-card h3 {
+    font-size: 18px;
+    margin-bottom: 12px;
+    line-height: 1.3;
+  }
+  .article-card p {
+    color: var(--text-muted);
+    font-size: 14px;
+    margin-bottom: 16px;
+  }
+  .article-meta {
+    display: flex;
+    justify-content: space-between;
+    font-size: 13px;
+    color: var(--text-muted);
+  }
+
+  /* Newsletter */
+  .newsletter {
+    text-align: center;
+    padding: 80px 20px;
+    background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+    color: white;
+  }
+  .newsletter h2 { font-size: 36px; margin-bottom: 16px; }
+  .newsletter p { font-size: 18px; opacity: 0.9; margin-bottom: 32px; }
+  .newsletter-form {
+    max-width: 500px;
+    margin: 0 auto;
+    display: flex;
+    gap: 12px;
+  }
+  .newsletter-form input {
+    flex: 1;
+    padding: 14px 20px;
+    border-radius: 8px;
+    border: none;
+    font-size: 16px;
+  }
+  .newsletter-form button {
+    padding: 14px 28px;
+    background: var(--text);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-weight: 600;
+    cursor: pointer;
+    font-size: 16px;
+  }
+
+  /* Footer */
+  footer {
+    background: var(--text);
+    color: white;
+    padding: 60px 0 24px;
+  }
+  .footer-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 40px;
+    margin-bottom: 40px;
+  }
+  .footer-col h4 { margin-bottom: 16px; font-size: 16px; }
+  .footer-col ul { list-style: none; }
+  .footer-col li { margin-bottom: 8px; }
+  .footer-col a {
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 14px;
+  }
+  .footer-col a:hover { color: white; }
+  .footer-bottom {
+    padding-top: 24px;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    text-align: center;
+    color: rgba(255, 255, 255, 0.6);
+    font-size: 14px;
+  }
+  .affiliate-disclaimer {
+    max-width: 800px;
+    margin: 24px auto 0;
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.5);
+    line-height: 1.5;
+  }
+
+  @media (max-width: 768px) {
+    .hero h1 { font-size: 36px; }
+    .hero p { font-size: 17px; }
+    nav ul { display: none; }
+    .section { padding: 60px 0; }
+    .section-title { font-size: 28px; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="container header-inner">
+    <div class="logo">AI<span>Pickd</span></div>
+    <nav>
+      <ul>
+        <li><a href="/writing">AI Writing</a></li>
+        <li><a href="/business">Business</a></li>
+        <li><a href="/image-video">Image & Video</a></li>
+        <li><a href="/coding">Coding</a></li>
+        <li><a href="/hosting">Hosting</a></li>
+        <li><a href="/about">About</a></li>
+      </ul>
+    </nav>
+  </div>
+</header>
+
+<section class="hero">
+  <div class="container">
+    <h1>Honest reviews of the <span>AI tools</span><br>that actually earn their seat</h1>
+    <p>No paid placements. No hype. Just side-by-side comparisons, real pricing, and the honest tradeoffs you won't find in the marketing copy.</p>
+    <a href="#featured" class="hero-cta">Browse Top Picks →</a>
+    <div class="trust-badges">
+      <div>🎯 200+ Reviews</div>
+      <div>⚡ Updated Weekly</div>
+      <div>🔍 Side-by-side Tested</div>
+      <div>💰 No Paid Placements</div>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="container">
+    <h2 class="section-title">Find the right tool</h2>
+    <p class="section-subtitle">Browse by category — we've tested them all so you don't have to.</p>
+    <div class="categories">
+      <a href="/writing" class="category-card">
+        <div class="category-icon">✍️</div>
+        <h3>AI Writing</h3>
+        <p>Jasper, Copy.ai, Writesonic, and 30+ more</p>
+      </a>
+      <a href="/business" class="category-card">
+        <div class="category-icon">💼</div>
+        <h3>Business</h3>
+        <p>Notion, ClickUp, Monday, Make.com</p>
+      </a>
+      <a href="/image-video" class="category-card">
+        <div class="category-icon">🎨</div>
+        <h3>Image & Video</h3>
+        <p>Midjourney, DALL-E, Runway, Synthesia</p>
+      </a>
+      <a href="/coding" class="category-card">
+        <div class="category-icon">💻</div>
+        <h3>Coding</h3>
+        <p>Cursor, Copilot, Claude Code, Tabnine</p>
+      </a>
+      <a href="/hosting" class="category-card">
+        <div class="category-icon">☁️</div>
+        <h3>Hosting & Infra</h3>
+        <p>Hostinger, Vercel, Supabase, Railway</p>
+      </a>
+    </div>
+  </div>
+</section>
+
+<section class="section featured" id="featured">
+  <div class="container">
+    <h2 class="section-title">Latest reviews</h2>
+    <p class="section-subtitle">Our most recent side-by-side tests and comparisons.</p>
+    <div class="articles-grid">
+      <article class="article-card">
+        <div class="article-image">Jasper vs Copy.ai vs Writesonic</div>
+        <div class="article-content">
+          <span class="article-tag">Writing</span>
+          <h3>Jasper vs Copy.ai vs Writesonic: Which AI Writer Wins in 2026?</h3>
+          <p>Head-to-head test of the three biggest AI writing tools. Real prices, real limitations, and clear picks for your use case.</p>
+          <div class="article-meta"><span>12 min read</span><span>Updated April 2026</span></div>
+        </div>
+      </article>
+      <article class="article-card">
+        <div class="article-image">11 Best AI Tools for Small Business</div>
+        <div class="article-content">
+          <span class="article-tag">Business</span>
+          <h3>11 Best AI Tools for Small Business Owners in 2026</h3>
+          <p>The tools that actually move the needle — not the ones that pay the best affiliate commissions.</p>
+          <div class="article-meta"><span>14 min read</span><span>Updated April 2026</span></div>
+        </div>
+      </article>
+      <article class="article-card">
+        <div class="article-image">Midjourney vs DALL-E vs Stable Diffusion</div>
+        <div class="article-content">
+          <span class="article-tag">Image & Video</span>
+          <h3>Midjourney vs DALL-E 3 vs Stable Diffusion: Real Head-to-Head</h3>
+          <p>We tested all three on 7 real use cases. Here's which one wins for each.</p>
+          <div class="article-meta"><span>11 min read</span><span>Updated April 2026</span></div>
+        </div>
+      </article>
+      <article class="article-card">
+        <div class="article-image">Cursor vs GitHub Copilot</div>
+        <div class="article-content">
+          <span class="article-tag">Coding</span>
+          <h3>Cursor vs GitHub Copilot in 2026: Which AI Coding Assistant Wins?</h3>
+          <p>Honest head-to-head based on real developer workflows. Spoiler: many pros run both.</p>
+          <div class="article-meta"><span>10 min read</span><span>Updated April 2026</span></div>
+        </div>
+      </article>
+      <article class="article-card">
+        <div class="article-image">Supabase vs Firebase</div>
+        <div class="article-content">
+          <span class="article-tag">Hosting</span>
+          <h3>Supabase vs Firebase in 2026: Which Backend Should You Choose?</h3>
+          <p>The Postgres-first newcomer vs the Google-backed incumbent. Who wins where.</p>
+          <div class="article-meta"><span>13 min read</span><span>Updated April 2026</span></div>
+        </div>
+      </article>
+      <article class="article-card">
+        <div class="article-image">Coming Soon</div>
+        <div class="article-content">
+          <span class="article-tag">More</span>
+          <h3>200+ reviews coming this year</h3>
+          <p>We publish 2-3 new reviews and comparisons every week. Subscribe to get them in your inbox.</p>
+          <div class="article-meta"><span>Subscribe below ↓</span><span></span></div>
+        </div>
+      </article>
+    </div>
+  </div>
+</section>
+
+<section class="newsletter">
+  <div class="container">
+    <h2>Get our weekly AI tool briefing</h2>
+    <p>One email every Sunday. Best deals, new reviews, and honest takes on the week's AI news.</p>
+    <form class="newsletter-form" onsubmit="event.preventDefault(); alert('Newsletter signup connected to your email tool');">
+      <input type="email" placeholder="you@example.com" required>
+      <button type="submit">Subscribe</button>
+    </form>
+  </div>
+</section>
+
+<footer>
+  <div class="container">
+    <div class="footer-grid">
+      <div class="footer-col">
+        <div class="logo" style="color: white; margin-bottom: 16px;">AITools<span style="color: var(--primary);">Hub</span></div>
+        <p style="color: rgba(255,255,255,0.7); font-size: 14px;">Honest reviews and comparisons of AI tools. Updated weekly.</p>
+      </div>
+      <div class="footer-col">
+        <h4>Categories</h4>
+        <ul>
+          <li><a href="/writing">AI Writing</a></li>
+          <li><a href="/business">Business</a></li>
+          <li><a href="/image-video">Image & Video</a></li>
+          <li><a href="/coding">Coding</a></li>
+          <li><a href="/hosting">Hosting & Infra</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Company</h4>
+        <ul>
+          <li><a href="/about">About</a></li>
+          <li><a href="/contact">Contact</a></li>
+          <li><a href="/how-we-review">How We Review</a></li>
+          <li><a href="/newsletter">Newsletter</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Legal</h4>
+        <ul>
+          <li><a href="/privacy">Privacy Policy</a></li>
+          <li><a href="/terms">Terms of Service</a></li>
+          <li><a href="/affiliate-disclosure">Affiliate Disclosure</a></li>
+          <li><a href="/cookie-policy">Cookie Policy</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <div class="affiliate-disclaimer">
+        <strong>Affiliate Disclosure:</strong> AIPickd participates in affiliate programs, meaning we may earn a commission when you click links or make purchases through our site. This comes at no additional cost to you. We only recommend tools we genuinely believe provide value. Our opinions are our own and are not influenced by affiliate relationships.
+      </div>
+      <div style="margin-top: 24px;">© 2026 AIPickd. All rights reserved.</div>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>
