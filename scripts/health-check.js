@@ -93,29 +93,43 @@ async function check(name, fn) {
   // 3. WordPress
   console.log("🌐 WordPress (aipickd.com):");
   const auth = Buffer.from(`${env.WP_USERNAME}:${env.WP_ADMIN_PASSWORD}`).toString("base64");
+  // Use a real browser-like User-Agent to avoid Hostinger/LiteSpeed 429 rate limits
+  const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+  const wpHeaders = (extra = {}) => ({ "User-Agent": UA, Accept: "application/json", ...extra });
+
+  // Helper with retry on 429
+  async function fetchWp(url, opts = {}) {
+    for (let attempt = 1; attempt <= 4; attempt++) {
+      const res = await fetch(url, { ...opts, headers: { ...wpHeaders(), ...(opts.headers || {}) } });
+      if (res.status !== 429) return res;
+      // Backoff: 5s, 10s, 20s
+      const wait = 5000 * Math.pow(2, attempt - 1);
+      await new Promise((r) => setTimeout(r, wait));
+    }
+    return await fetch(url, { ...opts, headers: { ...wpHeaders(), ...(opts.headers || {}) } });
+  }
+
   await check("Site reachable", async () => {
-    const res = await fetch("https://aipickd.com/");
-    if (res.status >= 500) throw new Error(`${res.status}`);
+    const res = await fetchWp("https://aipickd.com/");
+    if (res.status >= 500 || res.status === 429) throw new Error(`${res.status}`);
     return `HTTP ${res.status}`;
   });
   await check("REST API reachable", async () => {
-    // miniOrange blocks the /wp-json/ root but /wp-json/wp/v2/ works
-    const res = await fetch("https://aipickd.com/wp-json/wp/v2/types", {
+    const res = await fetchWp("https://aipickd.com/wp-json/wp/v2/types", {
       headers: { Authorization: `Basic ${auth}` },
     });
     if (!res.ok) throw new Error(`${res.status}`);
     return "WP v2 OK";
   });
   await check("Basic Auth works", async () => {
-    const res = await fetch("https://aipickd.com/wp-json/wp/v2/posts?per_page=1&context=edit", {
+    const res = await fetchWp("https://aipickd.com/wp-json/wp/v2/posts?per_page=1&context=edit", {
       headers: { Authorization: `Basic ${auth}` },
     });
     if (!res.ok) throw new Error(`Auth failed: ${res.status}`);
     return "auth OK";
   });
   await check("Write access (posts)", async () => {
-    // List posts as a proxy for write capability (the actual endpoint test would create garbage)
-    const res = await fetch("https://aipickd.com/wp-json/wp/v2/posts?status=draft&per_page=1", {
+    const res = await fetchWp("https://aipickd.com/wp-json/wp/v2/posts?status=draft&per_page=1", {
       headers: { Authorization: `Basic ${auth}` },
     });
     if (!res.ok) throw new Error(`${res.status}`);

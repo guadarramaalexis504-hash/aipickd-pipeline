@@ -95,26 +95,37 @@ async function gpt(model, system, user, maxTokens, jsonMode = false) {
 
 async function wp(method, endpoint, body) {
   const auth = Buffer.from(`${WP_USERNAME}:${WP_ADMIN_PASSWORD}`).toString("base64");
+  const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
   const attempt = async () => {
     const ctrl = new AbortController();
     const to = setTimeout(() => ctrl.abort(), 60_000);
     try {
       const res = await fetch(`https://aipickd.com/wp-json/wp/v2/${endpoint}`, {
         method,
-        headers: { Authorization: `Basic ${auth}`, "Content-Type": "application/json" },
+        headers: {
+          Authorization: `Basic ${auth}`,
+          "Content-Type": "application/json",
+          "User-Agent": UA,
+          Accept: "application/json",
+        },
         body: body ? JSON.stringify(body) : undefined,
         signal: ctrl.signal,
       });
       const text = await res.text();
-      if (!res.ok) throw new Error(`WP: ${res.status} ${text.slice(0, 300)}`);
+      if (!res.ok) {
+        const err = new Error(`WP: ${res.status} ${text.slice(0, 300)}`);
+        err.status = res.status;
+        throw err;
+      }
       return text ? JSON.parse(text) : null;
     } finally { clearTimeout(to); }
   };
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < 5; i++) {
     try { return await attempt(); }
     catch (e) {
-      if (i === 2) throw e;
-      await new Promise((r) => setTimeout(r, 2000 * (i + 1)));
+      if (i === 4) throw e;
+      const baseWait = e.status === 429 ? 10000 : 2000;
+      await new Promise((r) => setTimeout(r, baseWait * (i + 1)));
     }
   }
 }

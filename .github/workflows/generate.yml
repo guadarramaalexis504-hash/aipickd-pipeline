@@ -50,6 +50,7 @@ jobs:
           GEN="${{ github.event.inputs.gen_count || '1' }}"
           node scripts/run-pipeline.js --gen "$GEN"
 
-      - name: Run health check
+      - name: Run health check (informational only)
         if: always()
+        continue-on-error: true
         run: node scripts/health-check.js

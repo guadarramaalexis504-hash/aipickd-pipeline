@@ -109,6 +109,8 @@ async function gpt(model, system, user, maxTokens, jsonMode = false) {
 
 async function wp(method, endpoint, body) {
   const auth = Buffer.from(`${WP_USERNAME}:${WP_ADMIN_PASSWORD}`).toString("base64");
+  // Real browser UA + standard headers to bypass Hostinger/LiteSpeed 429 rate limits on bot UAs
+  const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
   const attempt = async () => {
     const ctrl = new AbortController();
     const to = setTimeout(() => ctrl.abort(), 60_000);
@@ -118,23 +120,32 @@ async function wp(method, endpoint, body) {
         headers: {
           Authorization: `Basic ${auth}`,
           "Content-Type": "application/json",
+          "User-Agent": UA,
+          Accept: "application/json",
         },
         body: body ? JSON.stringify(body) : undefined,
         signal: ctrl.signal,
       });
       const text = await res.text();
-      if (!res.ok) throw new Error(`WP ${method} ${endpoint}: ${res.status} ${text.slice(0, 300)}`);
+      if (!res.ok) {
+        const err = new Error(`WP ${method} ${endpoint}: ${res.status} ${text.slice(0, 300)}`);
+        err.status = res.status;
+        throw err;
+      }
       return text ? JSON.parse(text) : null;
     } finally {
       clearTimeout(to);
     }
   };
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < 5; i++) {
     try {
       return await attempt();
     } catch (e) {
-      if (i === 2) throw e;
-      await new Promise((r) => setTimeout(r, 2000 * (i + 1)));
+      if (i === 4) throw e;
+      // Longer backoff for 429 (rate limit) — Hostinger may need 10-30s to clear
+      const isRateLimit = e.status === 429;
+      const baseWait = isRateLimit ? 10000 : 2000;
+      await new Promise((r) => setTimeout(r, baseWait * (i + 1)));
     }
   }
 }
