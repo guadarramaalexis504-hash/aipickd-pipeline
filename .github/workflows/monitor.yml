@@ -5,25 +5,30 @@ on:
     - cron: "0 * * * *" # Every hour
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: aipickd-monitor
+  cancel-in-progress: true
+
 jobs:
   monitor:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
+    timeout-minutes: 8
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: "20"
           cache: "npm"
 
       - name: Install npm deps
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund --ignore-scripts || npm install --no-audit --no-fund --ignore-scripts
 
       - name: Cache Playwright browsers
         uses: actions/cache@v4
@@ -34,15 +39,29 @@ jobs:
       - name: Install Playwright Chromium
         run: npx playwright install chromium --with-deps
 
-      - name: Reconstruct .env
+      - name: Reconstruct .env (minimal)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          cat > .env <<EOF
-          SUPABASE_URL="${{ secrets.SUPABASE_URL }}"
-          SUPABASE_SERVICE_ROLE_KEY="${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}"
-          DISCORD_WEBHOOK_URL="${{ secrets.DISCORD_WEBHOOK_URL }}"
-          TELEGRAM_BOT_TOKEN="${{ secrets.TELEGRAM_BOT_TOKEN }}"
-          TELEGRAM_CHAT_ID="${{ secrets.TELEGRAM_CHAT_ID }}"
-          EOF
+          umask 077
+          {
+            echo "SUPABASE_URL=\"${SUPABASE_URL}\""
+            echo "SUPABASE_SERVICE_ROLE_KEY=\"${SUPABASE_SERVICE_ROLE_KEY}\""
+            echo "DISCORD_WEBHOOK_URL=\"${DISCORD_WEBHOOK_URL}\""
+            echo "TELEGRAM_BOT_TOKEN=\"${TELEGRAM_BOT_TOKEN}\""
+            echo "TELEGRAM_CHAT_ID=\"${TELEGRAM_CHAT_ID}\""
+          } > .env
 
-      - name: Run site monitor
+      - name: Run site monitor (alert-only mode)
         run: node scripts/monitor-site.js --alert
+
+      - name: Shred .env
+        if: always()
+        run: |
+          if [ -f .env ]; then
+            shred -u .env 2>/dev/null || rm -f .env
+          fi

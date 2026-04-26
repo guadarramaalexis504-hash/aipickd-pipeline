@@ -1,0 +1,91 @@
+name: Security Scan
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Run security scan every Monday at 8 AM UTC
+    - cron: "0 8 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  secret-scan:
+    name: Scan for Leaked Secrets
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Scan for hardcoded credentials
+        run: |
+          echo "Scanning for common credential patterns..."
+          ! git ls-files | xargs grep -lE "sk-proj-[a-zA-Z0-9_-]{20,}|sk-ant-[a-zA-Z0-9_-]{20,}|eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|ghp_[a-zA-Z0-9]{36}" 2>/dev/null \
+            && echo "✅ No hardcoded credentials found" \
+            || (echo "❌ FOUND HARDCODED SECRETS — review immediately" && exit 1)
+
+      - name: Verify .env never committed
+        run: |
+          if git log --all --full-history -- .env 2>/dev/null | grep -q .; then
+            echo "❌ .env was committed at some point"
+            exit 1
+          fi
+          echo "✅ .env never committed"
+
+  dep-audit:
+    name: npm Dependency Audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install
+        run: npm install --no-audit --no-fund --ignore-scripts
+      - name: Audit (high+critical only)
+        run: npm audit --audit-level=high
+
+  codeql:
+    name: CodeQL Static Analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: javascript
+          queries: security-and-quality
+      - uses: github/codeql-action/analyze@v3
+
+  workflow-permissions-audit:
+    name: Verify Workflow Permissions
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check workflows declare minimal permissions
+        run: |
+          echo "Checking each workflow has explicit 'permissions' declared..."
+          missing=0
+          for f in .github/workflows/*.yml; do
+            if ! grep -q "^permissions:" "$f"; then
+              echo "  ⚠️  $f missing 'permissions:' block"
+              missing=$((missing + 1))
+            fi
+          done
+          if [ $missing -gt 0 ]; then
+            echo "❌ $missing workflows have over-permissive defaults"
+            exit 1
+          fi
+          echo "✅ All workflows declare explicit permissions"

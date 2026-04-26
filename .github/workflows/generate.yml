@@ -1,51 +1,79 @@
 name: AIPickd Auto-Generation
 
 on:
-  # Cron: every 4 hours (UTC). Adjust as needed.
   schedule:
+    # Every 4 hours UTC. ~6 articles/day.
     - cron: "0 */4 * * *"
-  # Allow manual trigger from Actions tab
   workflow_dispatch:
     inputs:
       gen_count:
-        description: "Articles to generate"
+        description: "Articles to generate (1-5)"
         required: false
         default: "1"
+
+# Minimal permissions — workflow only reads code + writes to external APIs.
+permissions:
+  contents: read
+
+# Prevent two pipelines from running concurrently (they'd race on keyword queue).
+concurrency:
+  group: aipickd-generate
+  cancel-in-progress: false
 
 jobs:
   generate:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: read
+    timeout-minutes: 25
 
     steps:
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
-      - name: Setup Node.js
+      - name: Setup Node.js 20
         uses: actions/setup-node@v4
         with:
           node-version: "20"
           cache: "npm"
 
       - name: Install dependencies
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund --ignore-scripts || npm install --no-audit --no-fund --ignore-scripts
 
-      - name: Reconstruct .env from secrets
+      - name: Reconstruct .env from secrets (in-memory only)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          WP_USERNAME: ${{ secrets.WP_USERNAME }}
+          WP_ADMIN_PASSWORD: ${{ secrets.WP_ADMIN_PASSWORD }}
         run: |
-          cat > .env <<EOF
-          SUPABASE_URL="${{ secrets.SUPABASE_URL }}"
-          SUPABASE_SERVICE_ROLE_KEY="${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}"
-          OPENAI_API_KEY="${{ secrets.OPENAI_API_KEY }}"
-          ANTHROPIC_API_KEY="${{ secrets.ANTHROPIC_API_KEY }}"
-          WP_USERNAME="${{ secrets.WP_USERNAME }}"
-          WP_ADMIN_PASSWORD="${{ secrets.WP_ADMIN_PASSWORD }}"
-          AUTO_PUBLISH="true"
-          DAILY_BUDGET="2"
-          EOF
+          umask 077
+          {
+            echo "SUPABASE_URL=\"${SUPABASE_URL}\""
+            echo "SUPABASE_SERVICE_ROLE_KEY=\"${SUPABASE_SERVICE_ROLE_KEY}\""
+            echo "OPENAI_API_KEY=\"${OPENAI_API_KEY}\""
+            echo "ANTHROPIC_API_KEY=\"${ANTHROPIC_API_KEY}\""
+            echo "WP_USERNAME=\"${WP_USERNAME}\""
+            echo "WP_ADMIN_PASSWORD=\"${WP_ADMIN_PASSWORD}\""
+            echo "AUTO_PUBLISH=\"true\""
+            echo "DAILY_BUDGET=\"2\""
+          } > .env
+
+      - name: Validate secrets present
+        run: node scripts/validate-secrets.js
 
       - name: Run pipeline (generate + publish)
         run: |
           GEN="${{ github.event.inputs.gen_count || '1' }}"
+          # Cap to 5 max even if user requests more
+          if [ "$GEN" -gt 5 ]; then GEN=5; fi
           node scripts/run-pipeline.js --gen "$GEN"
+
+      - name: Always shred .env at end
+        if: always()
+        run: |
+          if [ -f .env ]; then
+            shred -u .env 2>/dev/null || rm -f .env
+          fi

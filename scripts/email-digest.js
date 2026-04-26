@@ -12,7 +12,7 @@
  *      - Copy the 16-character password
  *   3. Add to .env:
  *      GMAIL_APP_PASSWORD="xxxx xxxx xxxx xxxx"
- *      DIGEST_TO_EMAIL="guadarramaalexis504@gmail.com"
+ *      DIGEST_TO_EMAIL="your-email@example.com"
  *
  * Usage:
  *   node scripts/email-digest.js              # sends weekly digest
