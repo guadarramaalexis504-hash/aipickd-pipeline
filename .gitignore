@@ -18,6 +18,7 @@ dashboard.html
 .cache/
 tmp/
 RESUMEN-*.md
+backup/
 
 # Sensitive local docs with credentials (never commit)
 CREDENCIALES*.md

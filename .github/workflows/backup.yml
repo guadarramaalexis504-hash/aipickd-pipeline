@@ -1,0 +1,58 @@
+name: Database Backup
+
+on:
+  schedule:
+    - cron: "0 5 * * *" # Daily at 5 AM UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aipickd-backup
+  cancel-in-progress: true
+
+jobs:
+  backup:
+    name: Backup Supabase tables to GitHub Artifact
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install
+        run: npm ci --no-audit --no-fund --ignore-scripts || npm install --no-audit --no-fund --ignore-scripts
+
+      - name: Reconstruct .env
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          umask 077
+          {
+            echo "SUPABASE_URL=\"${SUPABASE_URL}\""
+            echo "SUPABASE_SERVICE_ROLE_KEY=\"${SUPABASE_SERVICE_ROLE_KEY}\""
+          } > .env
+
+      - name: Export Supabase tables
+        run: node scripts/backup-supabase.js
+
+      - name: Upload backup artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: supabase-backup-${{ github.run_id }}
+          path: backup/
+          retention-days: 30
+          compression-level: 9
+
+      - name: Shred .env
+        if: always()
+        run: rm -f .env

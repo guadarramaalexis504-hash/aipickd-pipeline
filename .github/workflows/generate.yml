@@ -64,6 +64,12 @@ jobs:
       - name: Validate secrets present
         run: node scripts/validate-secrets.js
 
+      - name: Enforce daily/monthly budget
+        env:
+          DAILY_BUDGET: "3"
+          MONTHLY_BUDGET: "50"
+        run: node scripts/cost-monitor.js --enforce
+
       - name: Run pipeline (generate + publish)
         run: |
           GEN="${{ github.event.inputs.gen_count || '1' }}"

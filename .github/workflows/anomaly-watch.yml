@@ -1,0 +1,52 @@
+name: Anomaly Watch
+
+on:
+  schedule:
+    - cron: "30 * * * *" # Every hour at :30 (offset from monitor.yml at :00)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aipickd-anomaly
+  cancel-in-progress: true
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Reconstruct .env (anomaly-detector + alerts only)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          umask 077
+          {
+            echo "SUPABASE_URL=\"${SUPABASE_URL}\""
+            echo "SUPABASE_SERVICE_ROLE_KEY=\"${SUPABASE_SERVICE_ROLE_KEY}\""
+            echo "DISCORD_WEBHOOK_URL=\"${DISCORD_WEBHOOK_URL}\""
+            echo "TELEGRAM_BOT_TOKEN=\"${TELEGRAM_BOT_TOKEN}\""
+            echo "TELEGRAM_CHAT_ID=\"${TELEGRAM_CHAT_ID}\""
+          } > .env
+
+      - name: Run anomaly detector
+        # exit code: 0 ok | 1 high | 2 critical
+        run: node scripts/anomaly-detector.js
+        continue-on-error: true # don't fail workflow on warnings, only the detector self-alerts
+
+      - name: Shred .env
+        if: always()
+        run: rm -f .env
