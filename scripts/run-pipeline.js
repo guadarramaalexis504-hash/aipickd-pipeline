@@ -340,12 +340,53 @@ function aggressiveClean(md) {
 
 function qualityGate(article) {
   const issues = [];
-  if (!article.word_count || article.word_count < 1000) issues.push(`too short: ${article.word_count}w`);
+  const md = article.content_markdown || "";
+
+  // Word count
+  if (!article.word_count || article.word_count < 1500) issues.push(`too short: ${article.word_count}w (min 1500)`);
+
+  // Title
   if (!article.title || article.title.length < 20) issues.push("title too short");
   if (/^[^a-zA-Z0-9]/.test(article.title || "")) issues.push("weird title char");
-  if (/\b(?:as an AI|I cannot|as a language model)\b/i.test(article.content_markdown || "")) {
-    issues.push("AI-tell in body");
+  // Year sanity: if there's any "2024" or "2025" but the title says 2026 → likely stale
+  if (/\b2026\b/.test(article.title || "") && /\b202[34]\b/.test(md)) {
+    const stale = (md.match(/\b202[34]\b/g) || []).length;
+    if (stale >= 3) issues.push(`stale year refs: ${stale}× 2024/2025 in body`);
   }
+
+  // AI tells (blocking)
+  const aiTellsHard = [
+    /\b(?:as an AI|I cannot|as a language model|I'm an AI|I am an AI)\b/i,
+    /\b(?:I don't have personal|in my training data)\b/i,
+  ];
+  if (aiTellsHard.some((re) => re.test(md))) issues.push("AI-tell in body");
+
+  // Unfinished templates
+  if (/\[AFFILIATE:[^\]]*\][^\[]*\[\/AFFILIATE\]/i.test(md)) {
+    // OK if matched and being processed by pipeline; only flag if active affiliates exist
+    // Actually: pipeline strips these later, so keep this as soft warning only.
+    // → not blocking
+  }
+
+  // Placeholder / lorem-ipsum / TODO markers
+  if (/\b(?:TODO|FIXME|XXX|lorem ipsum)\b/i.test(md)) issues.push("placeholder text in body");
+
+  // Truncation indicators (GPT might truncate output)
+  if (md.endsWith("...") || md.endsWith("…")) issues.push("appears truncated");
+
+  // Duplicate consecutive paragraphs (common GPT failure mode)
+  const paras = md.split(/\n\n+/).filter((p) => p.length > 100);
+  for (let i = 1; i < paras.length; i++) {
+    if (paras[i] === paras[i - 1]) {
+      issues.push("duplicate consecutive paragraph");
+      break;
+    }
+  }
+
+  // Heading sanity: must have at least 3 ## headings (proper structure)
+  const h2Count = (md.match(/^##\s+/gm) || []).length;
+  if (h2Count < 3) issues.push(`only ${h2Count} H2 headings (min 3)`);
+
   return { pass: issues.length === 0, issues };
 }
 
