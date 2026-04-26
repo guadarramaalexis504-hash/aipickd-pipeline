@@ -1,10 +1,13 @@
 # 🤖 AIPickd — Autonomous Affiliate Blog
 
-**Status:** ✅ Production-ready as of 2026-04-21
+**Status:** ✅ Production-ready (cloud-hosted, hardened) as of 2026-04-26
 **Live site:** https://aipickd.com
-**Monetization:** Affiliate programs (Amazon, Impact, PartnerStack, direct partnerships)
+**Monetization:** Affiliate programs (Amazon active, 32 more pending)
 
-> **Si estás leyendo esto por primera vez, empieza aquí:** [`ESTADO-FINAL.md`](./ESTADO-FINAL.md)
+> **Si estás leyendo esto por primera vez:** [`docs/NUEVO-EN-LA-NUBE.md`](./docs/NUEVO-EN-LA-NUBE.md)
+> **Para hardening manual:** [`docs/HARDENING-CHECKLIST.md`](./docs/HARDENING-CHECKLIST.md)
+> **Para arquitectura:** [`docs/architecture.md`](./docs/architecture.md)
+> **Para security ops:** [`docs/security-runbook.md`](./docs/security-runbook.md)
 
 ---
 
@@ -16,38 +19,44 @@ Blog de reseñas honestas y comparativas de herramientas de IA y SaaS. Contenido
 
 ---
 
-## 🏗️ Arquitectura (actualizada 2026-04-21)
+## 🏗️ Arquitectura (cloud-native desde 2026-04-26)
+
+Ver [`docs/architecture.md`](./docs/architecture.md) para diagrama completo. TL;DR:
 
 ```
-                  Windows Task Scheduler (cada 4h)
-                           │
-                           ▼
-                  scripts/run-pipeline.js
-                           │
-         ┌─────────────────┼─────────────────┐
-         ▼                 ▼                 ▼
-   ┌──────────┐      ┌──────────┐      ┌──────────┐
-   │ Supabase │      │  OpenAI  │      │WordPress │
-   │ Postgres │──────│  GPT-4o  │─────▶│ REST API │
-   │ keywords │◀─────│gpt-4o-mini│     │ miniOrange│
-   │ articles │      └──────────┘      │ Basic Auth│
-   │affiliates│                        └──────────┘
-   └──────────┘                             │
-                                            ▼
-                                   https://aipickd.com
-                                   Article published
-                                   + affiliate links
-                                   = $$$
+GitHub Actions (cron)  ──>  Pipeline  ──>  Supabase + OpenAI + WordPress
+   ↓                                              ↓
+   5 workflows (generate, monitor,         aipickd.com (live)
+   anomaly, backup, security-scan)
 ```
 
 **Stack:**
-- **Orchestration:** Node.js scripts + Windows Task Scheduler (simple, free)
-- **Content gen:** OpenAI GPT-4o (2-pass ~2500 words) + GPT-4o-mini (polish)
-- **Database:** Supabase (free tier, 10 tables)
-- **Publishing:** WordPress on Hostinger + miniOrange plugin for REST auth
-- **Domain:** Namecheap aipickd.com ($11/yr)
+- **Orchestration:** GitHub Actions (5 workflows, cron-based)
+- **Content gen:** OpenAI GPT-4o (multi-pass ~2500 words) + DALL-E 3 images
+- **Database:** Supabase Postgres (free tier)
+- **Publishing:** WordPress on Hostinger + miniOrange Basic Auth REST
+- **Domain:** Namecheap aipickd.com ($11/yr) + DNS via Hostinger
+- **Backups:** Daily Supabase export → GitHub Artifacts (30 days)
+- **Monitoring:** Hourly site check + hourly anomaly detection
+- **Budget protection:** $3/day, $50/month hard caps (enforced pre-spend)
 
-**Cost:** ~$5/mo hosting + ~$60/mo AI = **~$65/mo operating cost**.
+**Cost:** ~$5/mo hosting + ~$10/mo AI = **~$15/mo operating cost**.
+
+---
+
+## 🔒 Security posture
+
+This repo includes:
+- ✅ Dependabot for npm + GitHub Actions
+- ✅ CodeQL static analysis on every push
+- ✅ Secret scanning + push protection
+- ✅ All workflows: minimal `permissions: contents: read`
+- ✅ All workflows shred `.env` on exit
+- ✅ Concurrency control (no race on keyword queue)
+- ✅ Pinned action versions (Dependabot updates)
+- ✅ `npm ci --ignore-scripts` (no malicious postinstall)
+
+See [`docs/security-runbook.md`](./docs/security-runbook.md) for incident response.
 
 ---
 
