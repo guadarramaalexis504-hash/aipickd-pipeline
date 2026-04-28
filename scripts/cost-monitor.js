@@ -76,6 +76,30 @@ const JSON_OUT = process.argv.includes("--json");
     console.log(`\n  All-time: $${allTimeCost.toFixed(4)} across ${articles.length} articles  (avg $${(allTimeCost / Math.max(articles.length, 1)).toFixed(4)})\n`);
   }
 
+  // ── Discord budget alerts ──────────────────
+  try {
+    const { notifyBudgetAlert } = require('./notify.js');
+
+    // Monthly alerts: 70%, 90%, 100%
+    if (monthPct >= 100) {
+      await notifyBudgetAlert(monthPct, monthCost, MONTHLY_BUDGET, 'monthly');
+    } else if (monthPct >= 90) {
+      await notifyBudgetAlert(monthPct, monthCost, MONTHLY_BUDGET, 'monthly');
+    } else if (monthPct >= 70) {
+      await notifyBudgetAlert(monthPct, monthCost, MONTHLY_BUDGET, 'monthly');
+    }
+
+    // Daily alerts: 80%, 100%
+    if (todayPct >= 100) {
+      await notifyBudgetAlert(todayPct, todayCost, DAILY_BUDGET, 'daily');
+    } else if (todayPct >= 80) {
+      await notifyBudgetAlert(todayPct, todayCost, DAILY_BUDGET, 'daily');
+    }
+  } catch (e) {
+    // Non-fatal — budget alerts shouldn't stop the monitor
+    if (process.env.NOTIFY_DEBUG) console.log('[cost-monitor] alert error:', e.message);
+  }
+
   if (ENFORCE) {
     if (todayCost >= DAILY_BUDGET) {
       console.error(`\n❌ DAILY BUDGET EXCEEDED ($${todayCost.toFixed(2)} ≥ $${DAILY_BUDGET}). Pipeline halted.\n`);

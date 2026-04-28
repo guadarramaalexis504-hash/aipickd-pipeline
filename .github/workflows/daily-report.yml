@@ -1,0 +1,58 @@
+name: Daily Digest
+
+on:
+  schedule:
+    # 9am Ciudad de México (UTC-6) = 15:00 UTC
+    - cron: "0 15 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aipickd-daily
+  cancel-in-progress: true
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Reconstruct .env (daily report — Discord + Supabase)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DISCORD_WEBHOOK_PIPELINE: ${{ secrets.DISCORD_WEBHOOK_PIPELINE }}
+          DISCORD_WEBHOOK_ALERTAS: ${{ secrets.DISCORD_WEBHOOK_ALERTAS }}
+          DISCORD_WEBHOOK_REPORTES: ${{ secrets.DISCORD_WEBHOOK_REPORTES }}
+          MONTHLY_BUDGET: "50"
+          DAILY_BUDGET: "3"
+        run: |
+          umask 077
+          {
+            echo "SUPABASE_URL=\"${SUPABASE_URL}\""
+            echo "SUPABASE_SERVICE_ROLE_KEY=\"${SUPABASE_SERVICE_ROLE_KEY}\""
+            echo "DISCORD_WEBHOOK_URL=\"${DISCORD_WEBHOOK_URL}\""
+            echo "DISCORD_WEBHOOK_PIPELINE=\"${DISCORD_WEBHOOK_PIPELINE}\""
+            echo "DISCORD_WEBHOOK_ALERTAS=\"${DISCORD_WEBHOOK_ALERTAS}\""
+            echo "DISCORD_WEBHOOK_REPORTES=\"${DISCORD_WEBHOOK_REPORTES}\""
+            echo "MONTHLY_BUDGET=\"50\""
+            echo "DAILY_BUDGET=\"3\""
+          } > .env
+
+      - name: Send daily digest to Discord
+        run: node scripts/daily-report.js
+
+      - name: Shred .env
+        if: always()
+        run: rm -f .env

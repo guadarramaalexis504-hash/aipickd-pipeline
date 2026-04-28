@@ -21,7 +21,7 @@
 
 const fs = require("fs");
 const path = require("path");
-const { notify } = require("./notify.js");
+const { notify, notifyArticle, notifyPipeline, notifyAlert, calcQualityScore } = require("./notify.js");
 
 const envPath = path.join(__dirname, "..", ".env");
 const env = {};
@@ -570,9 +570,26 @@ async function publishAllDrafts(maxCount = 10) {
       });
       published.push({ title: article.title, wp_id: wpPost.id, url: wpPost.link });
       console.log(`   ✓ ${WP_STATUS === "publish" ? "LIVE" : "Draft"} WP #${wpPost.id}: ${article.title.slice(0, 55)}`);
-      // Fire-and-forget notification
+      // Fire-and-forget rich Discord notification
       if (WP_STATUS === "publish") {
-        notify(`📝 *New article LIVE on AIPickd*\n\n**${article.title}**\n\n🔗 ${wpPost.link}`).catch(() => {});
+        // Calculate quality score from word count + issues (article already passed QA so 0 issues)
+        const qScore = calcQualityScore(article.word_count, []);
+        // Get affiliate names from IDs (affiliates_mentioned = array of affiliate IDs)
+        const affiliateNames = [];
+        try {
+          if (article.affiliates_mentioned && article.affiliates_mentioned.length > 0) {
+            const affData = await supa("GET", `affiliates?id=in.(${article.affiliates_mentioned.join(',')})&select=brand`);
+            if (Array.isArray(affData)) affiliateNames.push(...affData.map(a => a.brand));
+          }
+        } catch {}
+        notifyArticle(
+          article.title,
+          wpPost.link,
+          article.word_count || 0,
+          affiliateNames,
+          qScore,
+          article.featured_image_url || null
+        ).catch(() => {});
       }
     } catch (e) {
       console.log(`   ✗ Failed for ${article.title}: ${e.message.slice(0, 100)}`);

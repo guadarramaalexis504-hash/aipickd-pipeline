@@ -88,12 +88,22 @@ jobs:
       - name: Notify Discord — pipeline completed
         if: success()
         run: |
-          node scripts/notify.js pipeline "✅ Pipeline completado — ${{ github.event.inputs.gen_count || '1' }} artículo(s) generados"
+          node -e "
+          const {notifyPipeline} = require('./scripts/notify.js');
+          notifyPipeline('✅ Pipeline completado exitosamente', {
+            articlesGenerated: ${{ github.event.inputs.gen_count || '1' }},
+            keywordsRemaining: 0,
+          }).then(r => console.log('Discord:', r.ok ? 'OK' : r.reason || r.status));
+          "
 
       - name: Notify Discord — pipeline failed
         if: failure()
         run: |
-          node scripts/notify.js alert "🚨 Pipeline FALLÓ en GitHub Actions — revisa los logs: https://github.com/${{ github.repository }}/actions"
+          node -e "
+          const {notifyAlert} = require('./scripts/notify.js');
+          notifyAlert('Pipeline FALLÓ en GitHub Actions\n\nRevisa los logs: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}', 'critical')
+            .then(r => console.log('Alert:', r.ok ? 'OK' : r.reason));
+          "
 
       - name: Always shred .env at end
         if: always()

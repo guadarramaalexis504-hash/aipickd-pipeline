@@ -1,18 +1,21 @@
 #!/usr/bin/env node
 /**
- * AIPickd — Unified notifications
+ * AIPickd — Unified notifications v2
  *
- * 4 canales de Discord (AIPickd HQ server):
- *   #articulos-publicados  → notify.article(title, url, words, affiliates)
- *   #alertas               → notify.alert(message)
- *   #pipeline-status       → notify.pipeline(message)
- *   #reportes-semanales    → notify.report(stats)
+ * 5 canales de Discord (AIPickd HQ):
+ *   #articulos-publicados  → notifyArticle(title, url, words, affiliates, qualityScore, imageUrl)
+ *   #alertas               → notifyAlert(message, severity)
+ *   #pipeline-status       → notifyPipeline(message, stats) | notifyDailyDigest(stats)
+ *   #reportes-semanales    → notifyReport(stats)
+ *   #alertas               → notifyBudgetAlert(pct, spent, budget)
  *
  * CLI:
  *   node scripts/notify.js article "Título" "https://..." 2500 "Jasper,Semrush"
- *   node scripts/notify.js alert "El sitio está caído"
+ *   node scripts/notify.js alert "Mensaje de alerta"
  *   node scripts/notify.js pipeline "Pipeline terminó: 3 artículos, $0.18"
- *   node scripts/notify.js report         # genera reporte desde Supabase
+ *   node scripts/notify.js report
+ *   node scripts/notify.js daily
+ *   node scripts/notify.js budget 72 36 50
  */
 
 const fs = require('fs');
@@ -28,9 +31,9 @@ try {
   });
 } catch {}
 
-// ──────────────────────────────────────────────
-// Core: POST to a Discord webhook with an embed
-// ──────────────────────────────────────────────
+// ─────────────────────────────────────────────
+// Core: POST to Discord webhook with embed
+// ─────────────────────────────────────────────
 async function postWebhook(url, payload) {
   if (!url) return { ok: false, reason: 'webhook URL not configured' };
   try {
@@ -47,127 +50,469 @@ async function postWebhook(url, payload) {
   }
 }
 
-// ──────────────────────────────────────────────
-// Channel helpers
-// ──────────────────────────────────────────────
+// ─────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────
 
-/** #articulos-publicados — nuevo artículo */
-async function notifyArticle(title, url, wordCount = 0, affiliates = []) {
-  const affiliateList = Array.isArray(affiliates) ? affiliates : String(affiliates).split(',').filter(Boolean);
+/** Barra visual de progreso: e.g. "████████░░ 80%" */
+function progressBar(pct, blocks = 10) {
+  const filled = Math.min(blocks, Math.round((pct / 100) * blocks));
+  return '█'.repeat(filled) + '░'.repeat(blocks - filled);
+}
+
+/** Estimado de ingresos mensual basado en palabras + artículos activos */
+function estimateEarnings(wordCount, totalArticles = 1) {
+  // Rough: más palabras → más ranking → más tráfico
+  // 1 article × avg 150 visits/month × 2% CTR × $4 commission
+  const perArticle = 150 * 0.02 * 4; // $12/article/month at scale
+  const wordBonus = wordCount >= 3000 ? 1.3 : wordCount >= 2500 ? 1.1 : 1.0;
+  return (perArticle * wordBonus).toFixed(2);
+}
+
+/** Emoji de calidad según score */
+function qualityEmoji(score) {
+  if (!score && score !== 0) return '⚪';
+  if (score >= 90) return '🌟';
+  if (score >= 80) return '🟢';
+  if (score >= 70) return '🟡';
+  return '🔴';
+}
+
+/** Calcula score simple de calidad basado en word count e issues */
+function calcQualityScore(wordCount = 0, issues = []) {
+  let score = 100;
+  // Word count
+  if (wordCount >= 3000) score += 5;
+  else if (wordCount >= 2500) score += 0;
+  else if (wordCount >= 2000) score -= 5;
+  else if (wordCount >= 1500) score -= 15;
+  else score -= 30;
+  // Issues
+  score -= issues.length * 10;
+  return Math.max(0, Math.min(100, score));
+}
+
+// ─────────────────────────────────────────────
+// 1. #articulos-publicados
+// ─────────────────────────────────────────────
+
+/**
+ * Notificación de artículo publicado — embed rico con calidad, earnings, thumbnail
+ * @param {string} title
+ * @param {string} url
+ * @param {number} wordCount
+ * @param {string|string[]} affiliates
+ * @param {number|null} qualityScore - 0-100, null = no calculado
+ * @param {string|null} imageUrl - URL de imagen destacada para thumbnail
+ */
+async function notifyArticle(title, url, wordCount = 0, affiliates = [], qualityScore = null, imageUrl = null) {
+  const affiliateList = Array.isArray(affiliates)
+    ? affiliates
+    : String(affiliates).split(',').map(s => s.trim()).filter(Boolean);
+
+  const words = Number(wordCount) || 0;
+  const qScore = qualityScore ?? null;
+  const qEmoji = qualityEmoji(qScore);
+  const qText = qScore !== null ? `${qEmoji} ${qScore}/100` : `${qEmoji} N/A`;
+
+  // Earnings estimate
+  const earnings = estimateEarnings(words);
+
+  // Color based on quality
+  const color = qScore >= 80 ? 0x00cc66 : qScore >= 70 ? 0xffd700 : qScore >= 60 ? 0xff9900 : 0x00cc66;
+
+  const embed = {
+    title: '📝 Nuevo artículo publicado',
+    description: `**[${title}](${url})**`,
+    url,
+    color,
+    fields: [
+      {
+        name: '📊 Palabras',
+        value: `**${words.toLocaleString()}** palabras`,
+        inline: true,
+      },
+      {
+        name: '⭐ Calidad',
+        value: qText,
+        inline: true,
+      },
+      {
+        name: '💰 Potencial/mes',
+        value: `~$${earnings} USD`,
+        inline: true,
+      },
+      {
+        name: '🔗 Afiliados',
+        value: affiliateList.length ? affiliateList.join(', ') : 'Solo Amazon',
+        inline: false,
+      },
+    ],
+    footer: { text: 'aipickd.com • Pipeline automático' },
+    timestamp: new Date().toISOString(),
+  };
+
+  // Si hay imagen, agregarla como thumbnail en Discord
+  if (imageUrl) {
+    embed.image = { url: imageUrl };
+  }
+
   const payload = {
     username: 'AIPickd Bot 🤖',
-    embeds: [{
-      title: `📝 Nuevo artículo publicado`,
-      description: `**[${title}](${url})**`,
-      color: 0x00cc66, // green
-      fields: [
-        { name: '📊 Palabras', value: wordCount ? `${Number(wordCount).toLocaleString()}` : 'N/A', inline: true },
-        { name: '🔗 Afiliados', value: affiliateList.length ? affiliateList.join(', ') : 'Solo Amazon', inline: true },
-        { name: '🌐 URL', value: url, inline: false },
-      ],
-      footer: { text: 'aipickd.com • Pipeline automático' },
-      timestamp: new Date().toISOString(),
-    }],
+    embeds: [embed],
   };
+
   const result = await postWebhook(env.DISCORD_WEBHOOK_ARTICULOS || env.DISCORD_WEBHOOK_URL, payload);
   if (process.env.NOTIFY_DEBUG) console.log('[notify:article]', result);
   return result;
 }
 
-/** #alertas — error o anomalía */
+// ─────────────────────────────────────────────
+// 2. #alertas
+// ─────────────────────────────────────────────
+
+/** Alerta de error, anomalía, o evento crítico */
 async function notifyAlert(message, severity = 'warning') {
-  const colors = { critical: 0xff0000, warning: 0xff9900, info: 0x3399ff };
-  const icons = { critical: '🚨', warning: '⚠️', info: 'ℹ️' };
+  const colors = { critical: 0xff0000, high: 0xff4400, warning: 0xff9900, info: 0x3399ff };
+  const icons  = { critical: '🚨', high: '🟠', warning: '⚠️', info: 'ℹ️' };
+  const severityNorm = colors[severity] ? severity : 'warning';
+
   const payload = {
     username: 'AIPickd Alert 🚨',
     embeds: [{
-      title: `${icons[severity] || '⚠️'} Alerta AIPickd`,
-      description: message.slice(0, 4096),
-      color: colors[severity] || colors.warning,
+      title: `${icons[severityNorm]} Alerta AIPickd — ${severityNorm.toUpperCase()}`,
+      description: String(message).slice(0, 4000),
+      color: colors[severityNorm],
       footer: { text: 'aipickd.com • Sistema de monitoreo' },
       timestamp: new Date().toISOString(),
     }],
   };
+
   const result = await postWebhook(env.DISCORD_WEBHOOK_ALERTAS, payload);
   if (process.env.NOTIFY_DEBUG) console.log('[notify:alert]', result);
   return result;
 }
 
-/** #pipeline-status — inicio/fin de pipeline */
+// ─────────────────────────────────────────────
+// 3. #alertas — Alerta de presupuesto
+// ─────────────────────────────────────────────
+
+/**
+ * @param {number} pct - Porcentaje usado (0-100+)
+ * @param {number} spent - Gasto actual
+ * @param {number} budget - Presupuesto máximo
+ * @param {string} period - 'daily' | 'monthly'
+ */
+async function notifyBudgetAlert(pct, spent, budget, period = 'monthly') {
+  const color = pct >= 100 ? 0xff0000 : pct >= 90 ? 0xff6600 : 0xffaa00;
+  const icon  = pct >= 100 ? '🔴' : pct >= 90 ? '🟠' : '🟡';
+  const bar   = progressBar(Math.min(pct, 100));
+  const remaining = Math.max(0, budget - spent).toFixed(2);
+
+  const statusMsg = pct >= 100
+    ? '❌ **Presupuesto agotado** — pipeline detenido automáticamente'
+    : pct >= 90
+    ? '⚠️ Presupuesto casi agotado — considera pausar el pipeline'
+    : '💡 Presupuesto al 70% — todo bajo control, solo un aviso';
+
+  const payload = {
+    username: 'AIPickd Alert 🚨',
+    embeds: [{
+      title: `${icon} Alerta de Presupuesto ${period === 'daily' ? 'Diario' : 'Mensual'} — ${pct.toFixed(0)}%`,
+      description: statusMsg,
+      color,
+      fields: [
+        { name: `💰 Gasto ${period === 'daily' ? 'hoy' : 'este mes'}`, value: `$${spent.toFixed(3)} / $${budget}`, inline: true },
+        { name: '📊 Progreso', value: `${bar} **${pct.toFixed(0)}%**`, inline: false },
+        { name: '💵 Disponible', value: `$${remaining}`, inline: true },
+      ],
+      footer: { text: 'aipickd.com • Monitor de presupuesto' },
+      timestamp: new Date().toISOString(),
+    }],
+  };
+
+  const result = await postWebhook(env.DISCORD_WEBHOOK_ALERTAS, payload);
+  if (process.env.NOTIFY_DEBUG) console.log('[notify:budget]', result);
+  return result;
+}
+
+// ─────────────────────────────────────────────
+// 4. #alertas — Uptime del sitio
+// ─────────────────────────────────────────────
+
+async function notifyUptimeDown(statusCode, responseMs = null) {
+  const detail = statusCode
+    ? `HTTP ${statusCode} — el servidor respondió pero con error`
+    : `Timeout / sin respuesta — el sitio no está accesible`;
+
+  const payload = {
+    username: 'AIPickd Alert 🚨',
+    embeds: [{
+      title: '🔴 aipickd.com CAÍDO',
+      description: `**El sitio no está disponible.**\n${detail}`,
+      color: 0xff0000,
+      fields: [
+        { name: '🌐 URL', value: 'https://aipickd.com', inline: true },
+        { name: '⏱️ Tiempo de respuesta', value: responseMs ? `${responseMs}ms` : 'timeout', inline: true },
+        { name: '📋 Estado HTTP', value: String(statusCode || 'N/A'), inline: true },
+      ],
+      footer: { text: 'aipickd.com • Monitor automático' },
+      timestamp: new Date().toISOString(),
+    }],
+  };
+
+  return postWebhook(env.DISCORD_WEBHOOK_ALERTAS, payload);
+}
+
+async function notifyUptimeRestored(responseMs = null) {
+  const payload = {
+    username: 'AIPickd Alert 🚨',
+    embeds: [{
+      title: '🟢 aipickd.com RESTAURADO',
+      description: '**El sitio volvió a estar en línea.** ✅',
+      color: 0x00cc66,
+      fields: responseMs
+        ? [{ name: '⏱️ Tiempo de respuesta', value: `${responseMs}ms`, inline: true }]
+        : [],
+      footer: { text: 'aipickd.com • Monitor automático' },
+      timestamp: new Date().toISOString(),
+    }],
+  };
+  return postWebhook(env.DISCORD_WEBHOOK_ALERTAS, payload);
+}
+
+// ─────────────────────────────────────────────
+// 5. #pipeline-status
+// ─────────────────────────────────────────────
+
 async function notifyPipeline(message, stats = {}) {
   const fields = [];
-  if (stats.articlesGenerated !== undefined) fields.push({ name: '📝 Artículos', value: String(stats.articlesGenerated), inline: true });
-  if (stats.cost !== undefined) fields.push({ name: '💰 Costo', value: `$${Number(stats.cost).toFixed(3)}`, inline: true });
-  if (stats.duration !== undefined) fields.push({ name: '⏱️ Duración', value: `${stats.duration}s`, inline: true });
-  if (stats.totalArticles !== undefined) fields.push({ name: '📚 Total artículos', value: String(stats.totalArticles), inline: true });
-  if (stats.monthlyCost !== undefined) fields.push({ name: '📅 Gasto mes', value: `$${Number(stats.monthlyCost).toFixed(2)}`, inline: true });
+  if (stats.articlesGenerated !== undefined)
+    fields.push({ name: '📝 Artículos', value: String(stats.articlesGenerated), inline: true });
+  if (stats.articlesPublished !== undefined)
+    fields.push({ name: '📤 Publicados', value: String(stats.articlesPublished), inline: true });
+  if (stats.cost !== undefined)
+    fields.push({ name: '💰 Costo', value: `$${Number(stats.cost).toFixed(3)}`, inline: true });
+  if (stats.duration !== undefined)
+    fields.push({ name: '⏱️ Duración', value: `${stats.duration}s`, inline: true });
+  if (stats.totalArticles !== undefined)
+    fields.push({ name: '📚 Total artículos', value: String(stats.totalArticles), inline: true });
+  if (stats.monthlyCost !== undefined)
+    fields.push({ name: '📅 Gasto mes', value: `$${Number(stats.monthlyCost).toFixed(2)}`, inline: true });
+  if (stats.keywordsRemaining !== undefined)
+    fields.push({ name: '🔑 Keywords en cola', value: String(stats.keywordsRemaining), inline: true });
 
   const payload = {
     username: 'AIPickd Pipeline ⚙️',
     embeds: [{
       title: '⚙️ Pipeline Status',
-      description: message.slice(0, 4096),
-      color: 0x5865F2, // Discord blurple
+      description: String(message).slice(0, 4000),
+      color: 0x5865F2,
       fields,
       footer: { text: 'aipickd.com • GitHub Actions' },
       timestamp: new Date().toISOString(),
     }],
   };
+
   const result = await postWebhook(env.DISCORD_WEBHOOK_PIPELINE, payload);
   if (process.env.NOTIFY_DEBUG) console.log('[notify:pipeline]', result);
   return result;
 }
 
-/** #reportes-semanales — resumen semanal */
+// ─────────────────────────────────────────────
+// 6. #pipeline-status — Daily Digest
+// ─────────────────────────────────────────────
+
+/**
+ * Reporte diario de la mañana
+ * @param {object} stats
+ * @param {number} stats.todayArticles
+ * @param {number} stats.yesterdayArticles
+ * @param {number} stats.todayCost
+ * @param {number} stats.monthCost
+ * @param {number} stats.keywordsInQueue
+ * @param {string} stats.siteStatus - 'up'|'down'|'unknown'
+ * @param {object|null} stats.lastArticle - {title, url}
+ * @param {number} stats.totalArticles
+ */
+async function notifyDailyDigest(stats = {}) {
+  const {
+    todayArticles = 0,
+    yesterdayArticles = 0,
+    todayCost = 0,
+    monthCost = 0,
+    keywordsInQueue = 0,
+    siteStatus = 'unknown',
+    lastArticle = null,
+    totalArticles = 0,
+  } = stats;
+
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('es-MX', {
+    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+  });
+
+  const trendEmoji = todayArticles > yesterdayArticles ? '📈' :
+                     todayArticles < yesterdayArticles ? '📉' : '➡️';
+  const siteEmoji  = siteStatus === 'up' ? '🟢' : siteStatus === 'down' ? '🔴' : '⚪';
+  const budgetPct  = (monthCost / 50) * 100;
+  const bar        = progressBar(budgetPct);
+
+  const fields = [
+    {
+      name: `📝 Artículos hoy ${trendEmoji}`,
+      value: `**${todayArticles}** (ayer: ${yesterdayArticles})`,
+      inline: true,
+    },
+    {
+      name: '💰 Gasto hoy',
+      value: `$${todayCost.toFixed(3)}`,
+      inline: true,
+    },
+    {
+      name: `${siteEmoji} Sitio`,
+      value: siteStatus === 'up' ? 'Online ✅' : siteStatus === 'down' ? 'CAÍDO 🚨' : 'Desconocido',
+      inline: true,
+    },
+    {
+      name: '📅 Presupuesto mensual',
+      value: `${bar} **${budgetPct.toFixed(0)}%**\n$${monthCost.toFixed(2)} / $50`,
+      inline: false,
+    },
+    {
+      name: '🔑 Keywords en cola',
+      value: String(keywordsInQueue),
+      inline: true,
+    },
+    {
+      name: '📚 Total artículos',
+      value: String(totalArticles),
+      inline: true,
+    },
+  ];
+
+  if (lastArticle) {
+    fields.push({
+      name: '⭐ Último artículo publicado',
+      value: `[${lastArticle.title}](${lastArticle.url})`,
+      inline: false,
+    });
+  }
+
+  const payload = {
+    username: 'AIPickd Daily 📅',
+    content: `☀️ **Daily Digest — ${dateStr}**`,
+    embeds: [{
+      color: 0x5865F2,
+      fields,
+      footer: { text: 'aipickd.com • Reporte automático diario — 9am' },
+      timestamp: now.toISOString(),
+    }],
+  };
+
+  const result = await postWebhook(env.DISCORD_WEBHOOK_PIPELINE, payload);
+  if (process.env.NOTIFY_DEBUG) console.log('[notify:daily]', result);
+  return result;
+}
+
+// ─────────────────────────────────────────────
+// 7. #reportes-semanales — Reporte semanal mejorado
+// ─────────────────────────────────────────────
+
 async function notifyReport(stats = {}) {
   const {
     totalArticles = 0,
     weekArticles = 0,
+    lastWeekArticles = 0,
     monthlyCost = 0,
     activeAffiliates = 1,
     pendingAffiliates = 32,
     topKeywords = [],
     siteStatus = 'unknown',
+    estimatedMonthlyEarnings = null,
+    keywordsInQueue = 0,
   } = stats;
+
+  const weekDiff    = weekArticles - lastWeekArticles;
+  const weekTrend   = weekDiff > 0 ? `📈 +${weekDiff}` : weekDiff < 0 ? `📉 ${weekDiff}` : '➡️ igual';
+  const budgetPct   = (monthlyCost / 50) * 100;
+  const bar         = progressBar(budgetPct);
+  const siteEmoji   = siteStatus === 'up' ? '🟢 Online' : siteStatus === 'down' ? '🔴 Caído' : '⚪ Desconocido';
+
+  // Earnings estimate: total articles * $12/article/month
+  const earningsEstimate = estimatedMonthlyEarnings !== null
+    ? `~$${estimatedMonthlyEarnings}/mes`
+    : `~$${(totalArticles * 12).toFixed(0)}/mes (estimado)`;
+
+  const fields = [
+    { name: '📚 Total artículos', value: String(totalArticles), inline: true },
+    { name: '✅ Esta semana', value: `**${weekArticles}** (${weekTrend})`, inline: true },
+    { name: `🌐 Sitio`, value: siteEmoji, inline: true },
+    {
+      name: '💰 Presupuesto mensual',
+      value: `${bar} **${budgetPct.toFixed(0)}%**\n$${Number(monthlyCost).toFixed(2)} / $50`,
+      inline: false,
+    },
+    { name: '💵 Ingresos estimados', value: earningsEstimate, inline: true },
+    { name: '🤝 Afiliados activos', value: String(activeAffiliates), inline: true },
+    { name: '⏳ Pendientes', value: String(pendingAffiliates), inline: true },
+    { name: '🔑 Keywords en cola', value: String(keywordsInQueue), inline: true },
+  ];
+
+  if (topKeywords.length > 0) {
+    fields.push({
+      name: '🏆 Top keywords procesadas',
+      value: topKeywords.slice(0, 5).map((k, i) => `${i + 1}. ${k}`).join('\n'),
+      inline: false,
+    });
+  }
 
   const payload = {
     username: 'AIPickd Reports 📊',
     embeds: [{
       title: '📊 Reporte Semanal — AIPickd',
-      color: 0xffd700, // gold
-      fields: [
-        { name: '📚 Total artículos', value: String(totalArticles), inline: true },
-        { name: '✅ Esta semana', value: String(weekArticles), inline: true },
-        { name: '🌐 Sitio', value: siteStatus === 'up' ? '🟢 Online' : '🔴 Offline', inline: true },
-        { name: '💰 Gasto mensual', value: `$${Number(monthlyCost).toFixed(2)} / $50`, inline: true },
-        { name: '🤝 Afiliados activos', value: String(activeAffiliates), inline: true },
-        { name: '⏳ Afiliados pendientes', value: String(pendingAffiliates), inline: true },
-      ],
+      color: 0xffd700,
+      fields,
       footer: { text: 'aipickd.com • Reporte automático semanal' },
       timestamp: new Date().toISOString(),
     }],
   };
+
   const result = await postWebhook(env.DISCORD_WEBHOOK_REPORTES, payload);
   if (process.env.NOTIFY_DEBUG) console.log('[notify:report]', result);
   return result;
 }
 
-/** Generic: para compatibilidad con código legacy */
+// ─────────────────────────────────────────────
+// 8. Compat: notify genérico para código legacy
+// ─────────────────────────────────────────────
 async function notify(message, channel = 'pipeline') {
   switch (channel) {
     case 'article': return notifyPipeline(message);
-    case 'alert': return notifyAlert(message);
-    case 'report': return notifyReport({ notes: message });
-    default: return notifyPipeline(message);
+    case 'alert':   return notifyAlert(message);
+    case 'report':  return notifyReport({ notes: message });
+    default:        return notifyPipeline(message);
   }
 }
 
-// Export
-module.exports = { notify, notifyArticle, notifyAlert, notifyPipeline, notifyReport };
+// Exports
+module.exports = {
+  notify,
+  notifyArticle,
+  notifyAlert,
+  notifyPipeline,
+  notifyReport,
+  notifyDailyDigest,
+  notifyBudgetAlert,
+  notifyUptimeDown,
+  notifyUptimeRestored,
+  calcQualityScore,
+  estimateEarnings,
+};
 
-// ──────────────────────────────────────────────
+// ─────────────────────────────────────────────
 // CLI
-// ──────────────────────────────────────────────
+// ─────────────────────────────────────────────
 if (require.main === module) {
   const [,, type, ...args] = process.argv;
 
@@ -175,30 +520,84 @@ if (require.main === module) {
     let result;
     switch (type) {
       case 'article':
-        result = await notifyArticle(args[0] || 'Test Article', args[1] || 'https://aipickd.com', args[2] || 2500, args[3] || 'Amazon');
+        result = await notifyArticle(
+          args[0] || '🧪 Artículo de prueba — Best AI Tools 2026',
+          args[1] || 'https://aipickd.com/test',
+          args[2] || 2500,
+          args[3] || 'Jasper,Semrush',
+          85,
+          null
+        );
         break;
+
       case 'alert':
-        result = await notifyAlert(args.join(' ') || '⚠️ Test alert', args[0] === 'critical' ? 'critical' : 'warning');
+        result = await notifyAlert(
+          args.join(' ') || '⚠️ Test alert — todo está bien',
+          args[0] === 'critical' ? 'critical' : args[0] === 'high' ? 'high' : 'warning'
+        );
         break;
+
       case 'pipeline':
-        result = await notifyPipeline(args.join(' ') || '✅ Pipeline test OK');
+        result = await notifyPipeline(args.join(' ') || '✅ Pipeline test OK', {
+          articlesGenerated: 1, articlesPublished: 1, cost: 0.045,
+          duration: 87, totalArticles: 82, keywordsRemaining: 47,
+        });
         break;
+
       case 'report':
         result = await notifyReport({
-          totalArticles: 85,
+          totalArticles: 82,
           weekArticles: 12,
+          lastWeekArticles: 8,
           monthlyCost: 3.80,
           activeAffiliates: 1,
           pendingAffiliates: 32,
           siteStatus: 'up',
+          keywordsInQueue: 47,
         });
         break;
+
+      case 'daily':
+        result = await notifyDailyDigest({
+          todayArticles: 3,
+          yesterdayArticles: 2,
+          todayCost: 0.12,
+          monthCost: 3.80,
+          keywordsInQueue: 47,
+          siteStatus: 'up',
+          totalArticles: 82,
+          lastArticle: {
+            title: 'Best AI Writing Tools 2026 — In-Depth Review',
+            url: 'https://aipickd.com/best-ai-writing-tools-2026',
+          },
+        });
+        break;
+
+      case 'budget':
+        result = await notifyBudgetAlert(
+          parseFloat(args[0]) || 72,
+          parseFloat(args[1]) || 36,
+          parseFloat(args[2]) || 50
+        );
+        break;
+
+      case 'uptime-down':
+        result = await notifyUptimeDown(503, 15000);
+        break;
+
+      case 'uptime-up':
+        result = await notifyUptimeRestored(320);
+        break;
+
       default:
-        // Legacy: just send the message to pipeline channel
-        result = await notifyPipeline(args.join(' ') || type || '🤖 AIPickd test notification');
+        result = await notifyPipeline(
+          args.join(' ') || type || '🤖 AIPickd test notification',
+          {}
+        );
     }
+
     console.log('Result:', JSON.stringify(result));
-    if (!result.ok) console.log('\n💡 Verifica que los webhooks estén en .env');
+    if (!result?.ok) console.log('\n💡 Verifica que los webhooks estén en .env');
   };
 
   run().catch(console.error);

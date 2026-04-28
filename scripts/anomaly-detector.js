@@ -104,14 +104,24 @@ async function supa(endpoint) {
   }
 
   // 5. Site availability check
+  let siteResponseMs = null;
+  let siteIsDown = false;
   try {
+    const siteStart = Date.now();
     const r = await fetch("https://aipickd.com/", {
       signal: AbortSignal.timeout(15000),
-      headers: { "User-Agent": "Mozilla/5.0 anomaly-check" },
+      headers: { "User-Agent": "Mozilla/5.0 AIPickd-anomaly-check/1.0" },
     });
-    if (!r.ok) flag("high", "site-down", `aipickd.com returned ${r.status}`, { status: r.status });
+    siteResponseMs = Date.now() - siteStart;
+    if (!r.ok) {
+      flag("high", "site-down", `aipickd.com returned ${r.status}`, { status: r.status, ms: siteResponseMs });
+      siteIsDown = true;
+    } else {
+      console.log(`  ✅ Site OK — ${r.status} in ${siteResponseMs}ms`);
+    }
   } catch (e) {
     flag("critical", "site-unreachable", `aipickd.com unreachable: ${e.message}`, { error: e.message });
+    siteIsDown = true;
   }
 
   // === Output ===
@@ -121,24 +131,46 @@ async function supa(endpoint) {
   }
 
   const sevColors = { critical: "🔴", high: "🟠", medium: "🟡", low: "🔵" };
-  console.log(`Found ${anomalies.length} anomalies:\n`);
+  console.log(`\nFound ${anomalies.length} anomalies:\n`);
   anomalies.forEach((a) => {
     console.log(`  ${sevColors[a.severity]} [${a.severity.toUpperCase()}] ${a.type}: ${a.message}`);
   });
 
-  // Send to Discord/Telegram if configured
-  if (env.DISCORD_WEBHOOK_URL && anomalies.some((a) => a.severity === "critical" || a.severity === "high")) {
-    const msg = "🚨 **AIPickd anomaly detected**\n\n" + anomalies
-      .filter((a) => a.severity === "critical" || a.severity === "high")
+  // Send to Discord using proper notify.js embeds
+  const { notifyAlert, notifyUptimeDown } = require("./notify.js");
+
+  // Site down: dedicated uptime alert
+  if (siteIsDown) {
+    const siteAnomaly = anomalies.find(a => a.type === "site-down" || a.type === "site-unreachable");
+    if (siteAnomaly) {
+      try {
+        await notifyUptimeDown(siteAnomaly.data?.status || null, siteResponseMs);
+        console.log("📨 Site down alert sent to Discord");
+      } catch {}
+    }
+  }
+
+  // Other anomalies: group critical + high into one alert
+  const criticalAndHigh = anomalies.filter(
+    (a) => (a.severity === "critical" || a.severity === "high") && a.type !== "site-down" && a.type !== "site-unreachable"
+  );
+  if (criticalAndHigh.length > 0) {
+    const msg = criticalAndHigh
       .map((a) => `${sevColors[a.severity]} **${a.type}**: ${a.message}`)
-      .join("\n");
+      .join("\n\n");
     try {
-      await fetch(env.DISCORD_WEBHOOK_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: msg.slice(0, 1900) }),
-      });
-      console.log("\n📨 Discord alert sent");
+      const worst = criticalAndHigh.some(a => a.severity === "critical") ? "critical" : "high";
+      await notifyAlert(`**${criticalAndHigh.length} anomalía(s) detectada(s)**\n\n${msg}`, worst);
+      console.log("📨 Anomaly alert sent to Discord");
+    } catch {}
+  }
+
+  // Medium anomalies: single info alert
+  const medium = anomalies.filter(a => a.severity === "medium");
+  if (medium.length > 0) {
+    const msg = medium.map(a => `🟡 **${a.type}**: ${a.message}`).join("\n\n");
+    try {
+      await notifyAlert(`**${medium.length} anomalía(s) media(s)**\n\n${msg}`, "warning");
     } catch {}
   }
 
