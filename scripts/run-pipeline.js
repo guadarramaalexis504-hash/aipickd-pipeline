@@ -922,6 +922,27 @@ async function publishAllDrafts(maxCount = 10) {
     }
   }
 
+  // --- Niche diversity check — alert if 3+ articles from same niche today ---
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const todayPublished = await supa("GET", `articles?published_at=gte.${today}&status=eq.published&select=niche_id,niche:niches(name)`);
+    if (Array.isArray(todayPublished) && todayPublished.length >= 3) {
+      const nicheCounts = {};
+      todayPublished.forEach(a => {
+        const name = a.niche?.name || a.niche_id || "unknown";
+        nicheCounts[name] = (nicheCounts[name] || 0) + 1;
+      });
+      const overloaded = Object.entries(nicheCounts).filter(([, c]) => c >= 3);
+      if (overloaded.length > 0) {
+        const msg = overloaded.map(([n, c]) => `• ${n}: ${c} artículos`).join("\n");
+        notifyAlert(
+          `🎯 **Concentración de nicho detectada hoy:**\n${msg}\n\nConsiderar diversificar keywords en la cola.`,
+          "info"
+        ).catch(() => {});
+      }
+    }
+  } catch {}
+
   // --- Keyword queue health check ---
   try {
     const queuedKwRes = await supa("GET", "keywords?status=eq.queued&select=id");

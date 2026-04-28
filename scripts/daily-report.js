@@ -65,8 +65,11 @@ async function checkSite() {
   const yesterday = new Date(now - 86400000).toISOString().slice(0, 10);
   const monthStart = now.toISOString().slice(0, 7) + '-01';
 
+  const weekAgo  = new Date(now - 7 * 86400000).toISOString().slice(0, 10);
+
   // Fetch data in parallel
-  const [todayArticlesRaw, yesterdayArticlesRaw, monthArticlesRaw, keywordsRaw, allArticlesRaw, site] =
+  const [todayArticlesRaw, yesterdayArticlesRaw, monthArticlesRaw, keywordsRaw, allArticlesRaw, site,
+         weekArticlesRaw, qaFailedRaw, qaFailedThisWeekRaw] =
     await Promise.all([
       supa(`articles?published_at=gte.${today}&select=id,title,wp_url,generation_cost_usd,word_count&order=published_at.desc`),
       supa(`articles?published_at=gte.${yesterday}&published_at=lt.${today}&select=id`),
@@ -74,12 +77,32 @@ async function checkSite() {
       supa(`keywords?status=eq.queued&select=id`),
       supa(`articles?select=id&limit=1`),
       checkSite(),
+      // This week's articles for avg word count + publish rate
+      supa(`articles?published_at=gte.${weekAgo}&select=id,word_count,status,generation_cost_usd`),
+      // Total qa_failed count
+      supa(`articles?status=eq.qa_failed&select=id`),
+      // qa_failed this week
+      supa(`articles?status=eq.qa_failed&created_at=gte.${weekAgo}&select=id,title,word_count`),
     ]);
 
   const todayArticles     = Array.isArray(todayArticlesRaw) ? todayArticlesRaw : [];
   const yesterdayArticles = Array.isArray(yesterdayArticlesRaw) ? yesterdayArticlesRaw : [];
   const monthArticles     = Array.isArray(monthArticlesRaw) ? monthArticlesRaw : [];
   const keywords          = Array.isArray(keywordsRaw) ? keywordsRaw : [];
+  const weekArticles      = Array.isArray(weekArticlesRaw) ? weekArticlesRaw : [];
+  const qaFailed          = Array.isArray(qaFailedRaw) ? qaFailedRaw : [];
+  const qaFailedThisWeek  = Array.isArray(qaFailedThisWeekRaw) ? qaFailedThisWeekRaw : [];
+
+  // Publish rate this week: published / (published + qa_failed)
+  const publishedThisWeek = weekArticles.filter(a => a.status === 'published').length;
+  const generatedThisWeek = publishedThisWeek + qaFailedThisWeek.length;
+  const publishRate = generatedThisWeek > 0 ? Math.round((publishedThisWeek / generatedThisWeek) * 100) : 100;
+
+  // Average word count for published articles this week
+  const publishedWithWords = weekArticles.filter(a => a.status === 'published' && a.word_count > 0);
+  const avgWordCount = publishedWithWords.length > 0
+    ? Math.round(publishedWithWords.reduce((s, a) => s + a.word_count, 0) / publishedWithWords.length)
+    : 0;
 
   // Get total article count
   const totalCount = await supa(`articles?select=id&limit=1`);
@@ -113,6 +136,9 @@ async function checkSite() {
   console.log(`  Month cost: $${monthCost.toFixed(2)} / $${MONTHLY_BUDGET}`);
   console.log(`  Keywords in queue: ${keywords.length}`);
   console.log(`  Site: ${site.status} (${site.ms}ms)`);
+  console.log(`  Publish rate (7d): ${publishRate}% (${publishedThisWeek}/${generatedThisWeek})`);
+  console.log(`  Avg word count (7d): ${avgWordCount} words`);
+  console.log(`  QA failed (total): ${qaFailed.length}, this week: ${qaFailedThisWeek.length}`);
 
   // Send daily digest
   await notifyDailyDigest({
@@ -124,8 +150,31 @@ async function checkSite() {
     siteStatus: site.status,
     lastArticle,
     totalArticles: totalArticlesCount,
+    publishRate,
+    avgWordCount,
+    qaFailedCount: qaFailed.length,
   });
   console.log('\n✅ Daily digest sent to Discord #pipeline-status');
+
+  // Publish rate alert — if below 60% this week
+  if (generatedThisWeek >= 5 && publishRate < 60) {
+    const { notifyAlert } = require('./notify.js');
+    await notifyAlert(
+      `📉 **Tasa de publicación baja: ${publishRate}%** esta semana\n${publishedThisWeek} publicados de ${generatedThisWeek} generados.\nDemasiados artículos fallando QA — revisar calidad de generación.`,
+      'high'
+    ).catch(() => {});
+    console.log(`⚠️ Publish rate alert sent (${publishRate}%)`);
+  }
+
+  // Alert if qa_failed accumulating (>5 this week)
+  if (qaFailedThisWeek.length > 5) {
+    const { notifyAlert } = require('./notify.js');
+    const titles = qaFailedThisWeek.slice(0, 3).map(a => `• ${(a.title||'').slice(0,50)} (${a.word_count||0}w)`).join('\n');
+    await notifyAlert(
+      `🚫 **${qaFailedThisWeek.length} artículos fallaron QA esta semana**\n${titles}\n\nRevisar prompt de generación — mayoría por contenido muy corto.`,
+      'warning'
+    ).catch(() => {});
+  }
 
   // Budget alert if >= 70%
   const monthPct = (monthCost / MONTHLY_BUDGET) * 100;

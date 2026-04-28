@@ -1,0 +1,54 @@
+name: Weekly Quality Report
+
+on:
+  schedule:
+    # Cada lunes a las 10am CDMX (UTC-6) = 16:00 UTC
+    - cron: "0 16 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aipickd-quality-report
+  cancel-in-progress: true
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Reconstruct .env (quality report)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          DISCORD_WEBHOOK_REPORTES: ${{ secrets.DISCORD_WEBHOOK_REPORTES }}
+          DISCORD_WEBHOOK_ALERTAS: ${{ secrets.DISCORD_WEBHOOK_ALERTAS }}
+          MONTHLY_BUDGET: "50"
+          DAILY_BUDGET: "3"
+        run: |
+          umask 077
+          {
+            echo "SUPABASE_URL=\"${SUPABASE_URL}\""
+            echo "SUPABASE_SERVICE_ROLE_KEY=\"${SUPABASE_SERVICE_ROLE_KEY}\""
+            echo "DISCORD_WEBHOOK_REPORTES=\"${DISCORD_WEBHOOK_REPORTES}\""
+            echo "DISCORD_WEBHOOK_ALERTAS=\"${DISCORD_WEBHOOK_ALERTAS}\""
+            echo "MONTHLY_BUDGET=\"50\""
+            echo "DAILY_BUDGET=\"3\""
+          } > .env
+
+      - name: Run weekly quality report
+        run: node scripts/quality-report.js
+
+      - name: Shred .env
+        if: always()
+        run: rm -f .env

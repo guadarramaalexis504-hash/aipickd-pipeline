@@ -345,6 +345,9 @@ async function notifyDailyDigest(stats = {}) {
     siteStatus = 'unknown',
     lastArticle = null,
     totalArticles = 0,
+    publishRate = null,
+    avgWordCount = null,
+    qaFailedCount = null,
   } = stats;
 
   const now = new Date();
@@ -391,6 +394,31 @@ async function notifyDailyDigest(stats = {}) {
     },
   ];
 
+  // Optional quality metrics (shown if available)
+  if (publishRate !== null) {
+    const rateEmoji = publishRate >= 80 ? '✅' : publishRate >= 60 ? '⚠️' : '🚨';
+    fields.push({
+      name: `${rateEmoji} Tasa publicación (7d)`,
+      value: `**${publishRate}%**`,
+      inline: true,
+    });
+  }
+  if (avgWordCount !== null && avgWordCount > 0) {
+    const wcEmoji = avgWordCount >= 2000 ? '✅' : avgWordCount >= 1500 ? '⚠️' : '🚨';
+    fields.push({
+      name: `${wcEmoji} Promedio palabras (7d)`,
+      value: `**${avgWordCount.toLocaleString()}** palabras`,
+      inline: true,
+    });
+  }
+  if (qaFailedCount !== null && qaFailedCount > 0) {
+    fields.push({
+      name: '🚫 QA Failed (total)',
+      value: `**${qaFailedCount}** artículos`,
+      inline: true,
+    });
+  }
+
   if (lastArticle) {
     fields.push({
       name: '⭐ Último artículo publicado',
@@ -424,22 +452,32 @@ async function notifyReport(stats = {}) {
     totalArticles = 0,
     weekArticles = 0,
     lastWeekArticles = 0,
-    monthlyCost = 0,
+    monthCost = 0,
+    monthlyCost = 0, // legacy compat
+    budget = 50,
     activeAffiliates = 1,
-    pendingAffiliates = 32,
+    pendingAffiliates = 0,
     topKeywords = [],
+    topArticles = [],
     siteStatus = 'unknown',
     estimatedMonthlyEarnings = null,
     keywordsInQueue = 0,
+    publishRate = null,
+    avgWordCount = null,
+    prevAvgWordCount = null,
+    byType = {},
+    topNiche = null,
+    qaFailedCount = null,
   } = stats;
 
+  const actualCost  = monthCost || monthlyCost;
   const weekDiff    = weekArticles - lastWeekArticles;
   const weekTrend   = weekDiff > 0 ? `📈 +${weekDiff}` : weekDiff < 0 ? `📉 ${weekDiff}` : '➡️ igual';
-  const budgetPct   = (monthlyCost / 50) * 100;
+  const budgetPct   = (actualCost / budget) * 100;
   const bar         = progressBar(budgetPct);
   const siteEmoji   = siteStatus === 'up' ? '🟢 Online' : siteStatus === 'down' ? '🔴 Caído' : '⚪ Desconocido';
 
-  // Earnings estimate: total articles * $12/article/month
+  // Earnings estimate
   const earningsEstimate = estimatedMonthlyEarnings !== null
     ? `~$${estimatedMonthlyEarnings}/mes`
     : `~$${(totalArticles * 12).toFixed(0)}/mes (estimado)`;
@@ -447,21 +485,69 @@ async function notifyReport(stats = {}) {
   const fields = [
     { name: '📚 Total artículos', value: String(totalArticles), inline: true },
     { name: '✅ Esta semana', value: `**${weekArticles}** (${weekTrend})`, inline: true },
-    { name: `🌐 Sitio`, value: siteEmoji, inline: true },
     {
       name: '💰 Presupuesto mensual',
-      value: `${bar} **${budgetPct.toFixed(0)}%**\n$${Number(monthlyCost).toFixed(2)} / $50`,
+      value: `${bar} **${budgetPct.toFixed(0)}%**\n$${Number(actualCost).toFixed(2)} / $${budget}`,
       inline: false,
     },
     { name: '💵 Ingresos estimados', value: earningsEstimate, inline: true },
-    { name: '🤝 Afiliados activos', value: String(activeAffiliates), inline: true },
-    { name: '⏳ Pendientes', value: String(pendingAffiliates), inline: true },
+    { name: '🤝 Con afiliados', value: String(activeAffiliates), inline: true },
     { name: '🔑 Keywords en cola', value: String(keywordsInQueue), inline: true },
   ];
 
+  // Publish rate
+  if (publishRate !== null) {
+    const rateEmoji = publishRate >= 80 ? '✅' : publishRate >= 60 ? '⚠️' : '🚨';
+    fields.push({ name: `${rateEmoji} Tasa publicación`, value: `**${publishRate}%**`, inline: true });
+  }
+
+  // Avg word count with trend
+  if (avgWordCount !== null && avgWordCount > 0) {
+    const wcEmoji = avgWordCount >= 2000 ? '✅' : avgWordCount >= 1500 ? '⚠️' : '🚨';
+    const wcTrend = prevAvgWordCount && prevAvgWordCount > 0
+      ? avgWordCount > prevAvgWordCount ? ' 📈' : avgWordCount < prevAvgWordCount ? ' 📉' : ''
+      : '';
+    fields.push({
+      name: `${wcEmoji} Promedio palabras${wcTrend}`,
+      value: `**${avgWordCount.toLocaleString()}**w`,
+      inline: true,
+    });
+  }
+
+  // QA failed
+  if (qaFailedCount !== null && qaFailedCount > 0) {
+    fields.push({ name: '🚫 QA Failed', value: `${qaFailedCount} artículos`, inline: true });
+  }
+
+  // Article type breakdown
+  const typeEntries = Object.entries(byType).sort((a, b) => b[1] - a[1]);
+  if (typeEntries.length > 0) {
+    fields.push({
+      name: '📋 Por tipo',
+      value: typeEntries.map(([t, c]) => `${t}: **${c}**`).join(' · '),
+      inline: false,
+    });
+  }
+
+  // Top niche
+  if (topNiche) {
+    fields.push({ name: '🎯 Nicho más activo', value: topNiche, inline: true });
+  }
+
+  // Top articles this week
+  if (topArticles.length > 0) {
+    fields.push({
+      name: '🏆 Top artículos (palabras)',
+      value: topArticles.slice(0, 3).map((a, i) =>
+        `${i + 1}. [${(a.title || '').slice(0, 45)}](${a.url || '#'}) — ${(a.words || 0).toLocaleString()}w`
+      ).join('\n'),
+      inline: false,
+    });
+  }
+
   if (topKeywords.length > 0) {
     fields.push({
-      name: '🏆 Top keywords procesadas',
+      name: '🏷️ Keywords procesadas',
       value: topKeywords.slice(0, 5).map((k, i) => `${i + 1}. ${k}`).join('\n'),
       inline: false,
     });
