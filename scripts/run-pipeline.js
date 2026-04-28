@@ -221,7 +221,7 @@ async function generateOne() {
   let totalCost = 0;
 
   try {
-    // Outline
+    // Outline — request at least 8 sections with explicit word targets
     const outlineRes = await gpt(
       "gpt-4o-2024-11-20",
       "You are an SEO strategist for a top-tier AI tools review publication. The current year is 2026. Output JSON only.",
@@ -234,45 +234,84 @@ Target word count: 2500
 Audience: Small business owners, marketers, creators evaluating AI tools.
 
 CRITICAL: All references must be 2026. If the keyword has a year, use 2026. Never use 2023, 2024, or 2025.
+CRITICAL: The outline MUST have at least 8 H2 sections. Each section must have word_target >= 200.
 
-Return a JSON object with keys: title (50-60 chars, includes keyword and "2026"), slug (kebab-case with "2026"), meta_description (150-160 chars, mentions 2026), primary_keyword, lsi_keywords (array of 5-7), target_word_count, sections (array of objects with heading, level, bullets array, word_target number), faqs (array of 5 question strings), internal_link_ideas (array of strings).`,
+Return a JSON object with keys: title (50-60 chars, includes keyword and "2026"), slug (kebab-case with "2026"), meta_description (150-160 chars, mentions 2026), primary_keyword, lsi_keywords (array of 5-7), target_word_count (must be 2500), sections (array of AT LEAST 8 objects with: heading, level, bullets array of 4-6 items, word_target number >= 200), faqs (array of 6 question strings), internal_link_ideas (array of strings).`,
       2500,
       true
     );
     totalCost += estimateCost("gpt-4o-2024-11-20", outlineRes.usage);
     const outline = JSON.parse(outlineRes.text);
 
-    // Draft
+    // Draft — explicit 2000+ word requirement with section-level guidance
+    const sectionTargets = (outline.sections || [])
+      .map((s, i) => `Section ${i + 1} "${s.heading}": write ~${s.word_target || 250} words`)
+      .join("\n");
+
     const draftRes = await gpt(
       "gpt-4o-2024-11-20",
       "You are a world-class technical writer for AI tools reviews. Style: clear, punchy, authoritative. Think Wirecutter meets a smart tech friend. The current date is April 2026 — all references must reflect this.",
-      `Write a complete publication-ready article based on this outline:
+      `Write a complete publication-ready article based on this outline.
 
 ${JSON.stringify(outline)}
 
+WORD COUNT TARGETS PER SECTION (you MUST meet these):
+${sectionTargets}
+TOTAL TARGET: 2500 words minimum. COUNT YOUR WORDS. If any section feels thin, add a real example, a comparison, specific numbers, or a mini case study.
+
 Rules:
 1. Current date: April 2026. Use "As of April 2026..." framing for pricing and features. NEVER reference 2023, 2024, or 2025 as "current" — those are the past.
-2. Show pros AND cons of every tool.
-3. Use markdown comparison tables when applicable.
+2. Show pros AND cons of every tool. Be specific: cost, limitations, learning curve.
+3. Use markdown comparison tables (at least one) with real specs.
 4. At first mention of a product, wrap it: [AFFILIATE:brand_name_lowercase]Product Name[/AFFILIATE]
-5. Add a 'Quick verdict' blockquote at the very top (before the intro) with 2-3 sentences.
+5. Add a 'Quick verdict' blockquote at the very top (before the intro) — 2-3 sentences with a clear recommendation.
 6. AVOID AI-tells: "in today's fast-paced world", "it's important to note", "let's dive in", "revolutionary", "game-changer", "seamless", "cutting-edge", "unlock", "harness the power".
 7. Use 2nd person ("you"), active voice, contractions OK.
-8. Write AT LEAST 2000 words. More detail = better. Include examples, specific numbers, and trade-offs.
-9. Cover EVERY section from the outline fully, with complete paragraphs under each heading.
-10. End with FAQ section answering the outline's questions.
+8. ⚠️ MINIMUM 2000 WORDS. This is non-negotiable. Short sections must be expanded with examples.
+9. Cover EVERY section from the outline fully. DO NOT skip sections or write one-liners.
+10. End with a full FAQ section answering all ${(outline.faqs || []).length} questions in detail.
+11. Add a "Key Takeaways" box right after the Quick verdict.
 
 Output: pure markdown. Start with # H1. No commentary before or after.`,
-      14000
+      16000
     );
     totalCost += estimateCost("gpt-4o-2024-11-20", draftRes.usage);
 
-    // Polish
+    // ── Expansion pass: if draft < 1800 words, auto-expand thin sections ──
+    let finalDraftText = draftRes.text;
+    const draftWords = draftRes.text.split(/\s+/).length;
+    if (draftWords < 1800) {
+      console.log(`   ⚡ Draft too short (${draftWords}w) — running expansion pass...`);
+      const expandRes = await gpt(
+        "gpt-4o-2024-11-20",
+        "You are an expert content editor. Expand the provided article to reach 2200+ words without repeating yourself. Add real examples, specific numbers, comparisons, and practical tips to thin sections.",
+        `This article is too short (${draftWords} words, target: 2200+). Expand ALL thin sections (any section under 200 words). Add:
+- Concrete examples with real numbers (pricing, percentages, time saved)
+- Step-by-step walkthroughs where applicable
+- Comparison details (feature X in tool A vs tool B)
+- Common use cases with specific scenarios
+- Tips or warnings the reader needs to know
+
+Keep the same structure (headings, tables, [AFFILIATE:...] tags). Do NOT add filler. Every added sentence must add value.
+
+ARTICLE TO EXPAND:
+${draftRes.text}
+
+Output: the full expanded markdown article only.`,
+        16000
+      );
+      totalCost += estimateCost("gpt-4o-2024-11-20", expandRes.usage);
+      finalDraftText = expandRes.text;
+      const expandedWords = finalDraftText.split(/\s+/).length;
+      console.log(`   ✅ Expanded: ${draftWords}w → ${expandedWords}w`);
+    }
+
+    // Polish — use the (possibly expanded) finalDraftText
     const polishRes = await gpt(
       "gpt-4o-mini",
-      "You are a strict editor for a top-tier tech review publication. Improve the draft, don't rewrite it. Remove AI-tells, tighten prose, ensure every tool has real pros AND cons. Keep all [AFFILIATE:...] tags intact. Keep structure (headings, tables, lists). Output: the full revised markdown only.",
-      draftRes.text,
-      14000
+      "You are a strict editor for a top-tier tech review publication. Improve the draft, don't rewrite it. Remove AI-tells, tighten prose, ensure every tool has real pros AND cons. Keep all [AFFILIATE:...] tags intact. Keep structure (headings, tables, lists). Do NOT shorten sections. Output: the full revised markdown only.",
+      finalDraftText,
+      16000
     );
     totalCost += estimateCost("gpt-4o-mini", polishRes.usage);
 
@@ -342,8 +381,8 @@ function qualityGate(article) {
   const issues = [];
   const md = article.content_markdown || "";
 
-  // Word count
-  if (!article.word_count || article.word_count < 1500) issues.push(`too short: ${article.word_count}w (min 1500)`);
+  // Word count — raised to 1800 (expansion pass ensures 2000+, so 1800 is the safety floor)
+  if (!article.word_count || article.word_count < 1800) issues.push(`too short: ${article.word_count}w (min 1800)`);
 
   // Title
   if (!article.title || article.title.length < 20) issues.push("title too short");
@@ -383,9 +422,9 @@ function qualityGate(article) {
     }
   }
 
-  // Heading sanity: must have at least 3 ## headings (proper structure)
+  // Heading sanity: must have at least 5 ## headings (proper structure for 2000+ word article)
   const h2Count = (md.match(/^##\s+/gm) || []).length;
-  if (h2Count < 3) issues.push(`only ${h2Count} H2 headings (min 3)`);
+  if (h2Count < 5) issues.push(`only ${h2Count} H2 headings (min 5)`);
 
   return { pass: issues.length === 0, issues };
 }
@@ -532,6 +571,11 @@ async function publishAllDrafts(maxCount = 10) {
     if (!qa.pass) {
       skippedCount++;
       console.log(`   ⏩ skip "${article.title.slice(0, 50)}": ${qa.issues.join(", ")}`);
+      // Mark as qa_failed so it doesn't clog the queue on future runs
+      await supa("PATCH", `articles?id=eq.${article.id}`, {
+        status: "qa_failed",
+        quality_score: 0,
+      }).catch(() => {});
       continue;
     }
 
@@ -640,6 +684,14 @@ async function publishAllDrafts(maxCount = 10) {
     published = res.count;
     skipped = res.skipped || 0;
     console.log(`   Published ${published} drafts, skipped ${skipped} (failed QA)\n`);
+
+    // Alert Discord if QA failures are accumulating
+    if (skipped > 3) {
+      notifyAlert(
+        `⚠️ **${skipped} artículos fallaron QA** en este run.\nGeneración produciendo contenido demasiado corto — revisar prompt.\n\nRun: https://github.com/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`,
+        "warning"
+      ).catch(() => {});
+    }
 
     // Auto-add internal links to new articles (post-publish hook)
     if (published > 0) {
