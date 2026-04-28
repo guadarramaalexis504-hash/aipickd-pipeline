@@ -21,7 +21,7 @@
 
 const fs = require("fs");
 const path = require("path");
-const { notify } = require("./notify.js");
+const { notify, notifyUptimeDown, notifyUptimeRestored, notifyAlert } = require("./notify.js");
 
 const envPath = path.join(__dirname, "..", ".env");
 const env = {};
@@ -136,17 +136,25 @@ const ALERT_ONLY = process.argv.includes("--alert");
     console.log(`\n🚨 ${issues.length} ISSUE(S) DETECTED:`);
     issues.forEach((i) => console.log(`    - ${i}`));
 
-    // Alert via notifications
-    const alertMsg = `🚨 *AIPickd site health alert*\n\n${issues.map((i) => `• ${i}`).join("\n")}\n\nCheck https://aipickd.com/`;
-    const r = await notify(alertMsg);
-    console.log(`\n📨 Alerts sent: discord=${r.discord.ok ? "✅" : "❌"} telegram=${r.telegram.ok ? "✅" : "❌"}`);
+    // Alert via notifications — route to #alertas channel
+    const isSiteDown = issues.some(i => i.includes("HTTP 5") || i.includes("ERR_") || i.includes("timeout"));
+    if (isSiteDown) {
+      const firstResult = results.find(r => !r.ok);
+      const statusCode = firstResult?.status || null;
+      const responseMs = firstResult?.loadMs || null;
+      await notifyUptimeDown(statusCode, responseMs).catch(() => {});
+    }
+    const alertMsg = `**${issues.length} problema(s) detectado(s) en aipickd.com**\n\n${issues.map(i => `• ${i}`).join("\n")}\n\n🔗 https://aipickd.com/`;
+    const r = await notifyAlert(alertMsg, isSiteDown ? "critical" : "high").catch(() => ({ ok: false }));
+    console.log(`\n📨 Alert sent to #alertas: ${r.ok ? "✅" : "❌"}`);
 
     process.exit(1);
   } else {
     console.log(`\n✅ All checks passed. Site is healthy.`);
     if (!ALERT_ONLY) {
-      // Optional daily "all good" ping
-      await notify(`✅ AIPickd health: all ${results.length} checks passed (avg ${Math.round(totalMs / results.length)}ms)`).catch(() => {});
+      // Optional "all good" ping to #alertas
+      const avgMs = Math.round(totalMs / results.length);
+      await notifyUptimeRestored(avgMs).catch(() => {});
     }
   }
 })().catch((e) => { console.error("❌ FATAL:", e.message); process.exit(1); });
