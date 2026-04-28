@@ -85,6 +85,12 @@ jobs:
           if [ "$GEN" -gt 5 ]; then GEN=5; fi
           node scripts/run-pipeline.js --gen "$GEN"
 
+      - name: Auto-refill keyword queue (if < 50 keywords)
+        if: success()
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: node scripts/auto-keywords.js
+
       - name: Notify Discord — pipeline completed
         if: success()
         run: |

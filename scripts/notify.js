@@ -350,6 +350,9 @@ async function notifyPipeline(message, stats = {}) {
  * @param {string} stats.siteStatus - 'up'|'down'|'unknown'
  * @param {object|null} stats.lastArticle - {title, url}
  * @param {number} stats.totalArticles
+ * @param {Array} stats.todayArticlesList - [{title, url, wordCount}]
+ * @param {number} stats.todayQaFailed - articles that failed QA today
+ * @param {number} stats.siteResponseMs - site response time in ms
  */
 async function notifyDailyDigest(stats = {}) {
   const {
@@ -364,6 +367,9 @@ async function notifyDailyDigest(stats = {}) {
     publishRate = null,
     avgWordCount = null,
     qaFailedCount = null,
+    todayArticlesList = [],
+    todayQaFailed = 0,
+    siteResponseMs = null,
   } = stats;
 
   const now = new Date();
@@ -376,12 +382,15 @@ async function notifyDailyDigest(stats = {}) {
   const siteEmoji  = siteStatus === 'up' ? '🟢' : siteStatus === 'down' ? '🔴' : '⚪';
   const budgetPct  = (monthCost / 50) * 100;
   const bar        = progressBar(budgetPct);
+  const siteLabel  = siteStatus === 'up'
+    ? `Online ✅${siteResponseMs ? ` (${siteResponseMs}ms)` : ''}`
+    : siteStatus === 'down' ? 'CAÍDO 🚨' : 'Desconocido';
 
   const fields = [
     {
       name: `📝 Artículos hoy ${trendEmoji}`,
-      value: `**${todayArticles}** (ayer: ${yesterdayArticles})`,
-      inline: true,
+      value: `**${todayArticles}** publicados${todayQaFailed > 0 ? ` • 🚫 ${todayQaFailed} fallaron QA` : ''} (ayer: ${yesterdayArticles})`,
+      inline: false,
     },
     {
       name: '💰 Gasto hoy',
@@ -390,7 +399,7 @@ async function notifyDailyDigest(stats = {}) {
     },
     {
       name: `${siteEmoji} Sitio`,
-      value: siteStatus === 'up' ? 'Online ✅' : siteStatus === 'down' ? 'CAÍDO 🚨' : 'Desconocido',
+      value: siteLabel,
       inline: true,
     },
     {
@@ -435,7 +444,19 @@ async function notifyDailyDigest(stats = {}) {
     });
   }
 
-  if (lastArticle) {
+  // Show list of today's articles if any were published
+  if (todayArticlesList.length > 0) {
+    const articleLines = todayArticlesList.slice(0, 5).map(a => {
+      const wc = a.wordCount ? ` (${a.wordCount.toLocaleString()}w)` : '';
+      return a.url ? `• [${a.title.slice(0, 55)}](${a.url})${wc}` : `• ${a.title.slice(0, 55)}${wc}`;
+    }).join('\n');
+    fields.push({
+      name: `✅ Publicados hoy (${Math.min(todayArticlesList.length, 5)} de ${todayArticlesList.length})`,
+      value: articleLines,
+      inline: false,
+    });
+  } else if (lastArticle) {
+    // Fallback: show last article if no today list
     fields.push({
       name: '⭐ Último artículo publicado',
       value: `[${lastArticle.title}](${lastArticle.url})`,

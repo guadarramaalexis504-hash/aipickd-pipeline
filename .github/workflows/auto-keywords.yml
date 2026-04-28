@@ -1,0 +1,59 @@
+name: Auto-Refill Keyword Queue
+
+on:
+  schedule:
+    # Every Sunday 8pm CDMX (UTC-6) = Monday 02:00 UTC
+    - cron: "0 2 * * 1"
+  workflow_dispatch:
+    inputs:
+      count:
+        description: "Number of keywords to generate (default: 30)"
+        required: false
+        default: "30"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aipickd-auto-keywords
+  cancel-in-progress: true
+
+jobs:
+  refill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Reconstruct .env
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          DISCORD_WEBHOOK_ALERTAS: ${{ secrets.DISCORD_WEBHOOK_ALERTAS }}
+          DISCORD_WEBHOOK_PIPELINE: ${{ secrets.DISCORD_WEBHOOK_PIPELINE }}
+        run: |
+          umask 077
+          {
+            echo "SUPABASE_URL=\"${SUPABASE_URL}\""
+            echo "SUPABASE_SERVICE_ROLE_KEY=\"${SUPABASE_SERVICE_ROLE_KEY}\""
+            echo "OPENAI_API_KEY=\"${OPENAI_API_KEY}\""
+            echo "DISCORD_WEBHOOK_ALERTAS=\"${DISCORD_WEBHOOK_ALERTAS}\""
+            echo "DISCORD_WEBHOOK_PIPELINE=\"${DISCORD_WEBHOOK_PIPELINE}\""
+          } > .env
+
+      - name: Generate keywords
+        run: |
+          COUNT="${{ github.event.inputs.count || '30' }}"
+          node scripts/auto-keywords.js --force --count "$COUNT"
+
+      - name: Shred .env
+        if: always()
+        run: rm -f .env

@@ -131,6 +131,17 @@ async function checkSite() {
     ? { title: todayArticles[0].title, url: todayArticles[0].wp_url }
     : null;
 
+  // Build today's article list for Discord (with word counts)
+  const todayArticlesList = todayArticles.map(a => ({
+    title: a.title || 'Sin título',
+    url: a.wp_url || null,
+    wordCount: a.word_count || 0,
+  }));
+
+  // Count today's qa_failed articles (created today, not published)
+  const todayStart = today; // "2026-04-28"
+  const todayQaFailed = qaFailedThisWeek.filter(a => (a.created_at || '').startsWith(todayStart)).length;
+
   console.log(`  Today: ${todayArticles.length} articles, $${todayCost.toFixed(3)}`);
   console.log(`  Yesterday: ${yesterdayArticles.length} articles`);
   console.log(`  Month cost: $${monthCost.toFixed(2)} / $${MONTHLY_BUDGET}`);
@@ -153,6 +164,9 @@ async function checkSite() {
     publishRate,
     avgWordCount,
     qaFailedCount: qaFailed.length,
+    todayArticlesList,
+    todayQaFailed,
+    siteResponseMs: site.ms,
   });
   console.log('\n✅ Daily digest sent to Discord #pipeline-status');
 
