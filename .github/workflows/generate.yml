@@ -48,6 +48,10 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           WP_USERNAME: ${{ secrets.WP_USERNAME }}
           WP_ADMIN_PASSWORD: ${{ secrets.WP_ADMIN_PASSWORD }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DISCORD_WEBHOOK_ARTICULOS: ${{ secrets.DISCORD_WEBHOOK_ARTICULOS }}
+          DISCORD_WEBHOOK_PIPELINE: ${{ secrets.DISCORD_WEBHOOK_PIPELINE }}
+          DISCORD_WEBHOOK_ALERTAS: ${{ secrets.DISCORD_WEBHOOK_ALERTAS }}
         run: |
           umask 077
           {
@@ -59,6 +63,10 @@ jobs:
             echo "WP_ADMIN_PASSWORD=\"${WP_ADMIN_PASSWORD}\""
             echo "AUTO_PUBLISH=\"true\""
             echo "DAILY_BUDGET=\"2\""
+            echo "DISCORD_WEBHOOK_URL=\"${DISCORD_WEBHOOK_URL}\""
+            echo "DISCORD_WEBHOOK_ARTICULOS=\"${DISCORD_WEBHOOK_ARTICULOS}\""
+            echo "DISCORD_WEBHOOK_PIPELINE=\"${DISCORD_WEBHOOK_PIPELINE}\""
+            echo "DISCORD_WEBHOOK_ALERTAS=\"${DISCORD_WEBHOOK_ALERTAS}\""
           } > .env
 
       - name: Validate secrets present
@@ -76,6 +84,16 @@ jobs:
           # Cap to 5 max even if user requests more
           if [ "$GEN" -gt 5 ]; then GEN=5; fi
           node scripts/run-pipeline.js --gen "$GEN"
+
+      - name: Notify Discord — pipeline completed
+        if: success()
+        run: |
+          node scripts/notify.js pipeline "✅ Pipeline completado — ${{ github.event.inputs.gen_count || '1' }} artículo(s) generados"
+
+      - name: Notify Discord — pipeline failed
+        if: failure()
+        run: |
+          node scripts/notify.js alert "🚨 Pipeline FALLÓ en GitHub Actions — revisa los logs: https://github.com/${{ github.repository }}/actions"
 
       - name: Always shred .env at end
         if: always()
