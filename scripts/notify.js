@@ -104,8 +104,9 @@ function calcQualityScore(wordCount = 0, issues = []) {
  * @param {string|string[]} affiliates
  * @param {number|null} qualityScore - 0-100, null = no calculado
  * @param {string|null} imageUrl - URL de imagen destacada para thumbnail
+ * @param {string} articleType - comparison|review|how-to|list|guide
  */
-async function notifyArticle(title, url, wordCount = 0, affiliates = [], qualityScore = null, imageUrl = null) {
+async function notifyArticle(title, url, wordCount = 0, affiliates = [], qualityScore = null, imageUrl = null, articleType = 'article') {
   const affiliateList = Array.isArray(affiliates)
     ? affiliates
     : String(affiliates).split(',').map(s => s.trim()).filter(Boolean);
@@ -118,18 +119,33 @@ async function notifyArticle(title, url, wordCount = 0, affiliates = [], quality
   // Earnings estimate
   const earnings = estimateEarnings(words);
 
+  // Reading time (avg 220 wpm)
+  const readMins = Math.max(1, Math.round(words / 220));
+  const readText = `~${readMins} min`;
+
+  // Article type badge
+  const typeBadges = {
+    comparison: '⚖️ Comparison',
+    review: '🔍 Review',
+    'how-to': '🛠️ How-To',
+    list: '📋 Listicle',
+    guide: '📖 Guide',
+    alternatives: '🔄 Alternatives',
+  };
+  const typeBadge = typeBadges[articleType] || `📄 ${articleType}`;
+
   // Color based on quality
-  const color = qScore >= 80 ? 0x00cc66 : qScore >= 70 ? 0xffd700 : qScore >= 60 ? 0xff9900 : 0x00cc66;
+  const color = qScore >= 90 ? 0x00ff88 : qScore >= 80 ? 0x00cc66 : qScore >= 70 ? 0xffd700 : qScore >= 60 ? 0xff9900 : 0x00cc66;
 
   const embed = {
     title: '📝 Nuevo artículo publicado',
-    description: `**[${title}](${url})**`,
+    description: `**[${title}](${url})**\n${typeBadge}`,
     url,
     color,
     fields: [
       {
         name: '📊 Palabras',
-        value: `**${words.toLocaleString()}** palabras`,
+        value: `**${words.toLocaleString()}w** • ${readText} lectura`,
         inline: true,
       },
       {
@@ -144,7 +160,7 @@ async function notifyArticle(title, url, wordCount = 0, affiliates = [], quality
       },
       {
         name: '🔗 Afiliados',
-        value: affiliateList.length ? affiliateList.join(', ') : 'Solo Amazon',
+        value: affiliateList.length ? affiliateList.join(', ') : 'Sin afiliados activos',
         inline: false,
       },
     ],
@@ -154,7 +170,7 @@ async function notifyArticle(title, url, wordCount = 0, affiliates = [], quality
 
   // Si hay imagen, agregarla como thumbnail en Discord
   if (imageUrl) {
-    embed.image = { url: imageUrl };
+    embed.thumbnail = { url: imageUrl };
   }
 
   const payload = {

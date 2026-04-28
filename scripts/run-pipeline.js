@@ -259,16 +259,36 @@ function estimateCost(model, usage) {
 
 // --- Generation (GPT-only, proven working) ---
 async function generateOne() {
+  // Fetch top 5 queued keywords — we'll pick the first one with < 3 prior qa_fails
   const keywords = await supa(
     "GET",
-    "keywords?status=eq.queued&assigned_article_id=is.null&order=priority.desc&limit=1&select=*,niche:niches(slug,name)"
+    "keywords?status=eq.queued&assigned_article_id=is.null&order=priority.desc&limit=5&select=*,niche:niches(slug,name)"
   );
   if (!keywords || keywords.length === 0) {
     return { skipped: true, reason: "No queued keywords" };
   }
-  const kw = keywords[0];
-  console.log(`   📝 Keyword: "${kw.keyword}" (${kw.niche?.name})`);
 
+  // Per-keyword failure guard: skip keywords that have already failed 3+ times
+  let kw = null;
+  for (const candidate of keywords) {
+    const failedRows = await supa("GET", `articles?keyword_id=eq.${candidate.id}&status=eq.qa_failed&select=id`).catch(() => []);
+    const failCount = Array.isArray(failedRows) ? failedRows.length : 0;
+    if (failCount >= 3) {
+      console.log(`   ⏭️  Skip "${candidate.keyword}" — already failed QA ${failCount}× (marking exhausted)`);
+      await supa("PATCH", `keywords?id=eq.${candidate.id}`, { status: "published" }).catch(() => {}); // move it out of queue
+      continue;
+    }
+    if (failCount > 0) {
+      console.log(`   ⚠️  "${candidate.keyword}" failed QA ${failCount}× before — attempting again with extra effort`);
+    }
+    kw = candidate;
+    break;
+  }
+  if (!kw) {
+    return { skipped: true, reason: "All top-5 keywords are exhausted (3+ failures each)" };
+  }
+
+  console.log(`   📝 Keyword: "${kw.keyword}" (${kw.niche?.name})`);
   await supa("PATCH", `keywords?id=eq.${kw.id}`, { status: "in_progress" });
   let totalCost = 0;
 
@@ -331,16 +351,16 @@ Ensure deep coverage with at least 8 substantive H2 sections.`;
 Keyword: ${kw.keyword}
 Article type: ${kw.article_type}
 Intent: ${kw.intent}
-Target word count: 2500
+Target word count: 3000 (HARD MINIMUM: 2000 words after editing)
 Audience: Small business owners, marketers, creators evaluating AI tools.
 
 ${typeGuide}
 
-CRITICAL: All references must be 2026. If the keyword has a year, use 2026. Never use 2023, 2024, or 2025.
-CRITICAL: The outline MUST have at least 8 H2 sections. Each section must have word_target >= 200.
-CRITICAL: Include a dedicated "FAQ" section as the last H2 with 6 questions.
+CRITICAL: All references must be 2026. If the keyword has a year, use 2026. Never use 2023, 2024, or 2025 as "current" — those are the past.
+CRITICAL: The outline MUST have at least 10 H2 sections. Each section must have word_target >= 250. Total word_targets must sum to 3000+.
+CRITICAL: Include a dedicated "FAQ" section as the last H2 with 6 substantive questions.
 
-Return a JSON object with keys: title (50-60 chars, includes keyword and "2026"), slug (kebab-case with "2026"), meta_description (150-160 chars, mentions 2026), primary_keyword, lsi_keywords (array of 5-7), target_word_count (must be 2500), article_type, sections (array of AT LEAST 8 objects with: heading, level, bullets array of 4-6 items, word_target number >= 200), faqs (array of 6 question strings), internal_link_ideas (array of strings).`,
+Return a JSON object with keys: title (50-60 chars, includes keyword and "2026"), slug (kebab-case with "2026"), meta_description (150-160 chars, mentions 2026), primary_keyword, lsi_keywords (array of 5-7), target_word_count (must be 3000), article_type, sections (array of AT LEAST 10 objects with: heading, level, bullets array of 4-6 items, word_target number >= 250), faqs (array of 6 question strings), internal_link_ideas (array of strings).`,
       2500,
       true
     );
@@ -364,7 +384,7 @@ ${typeGuide}
 
 WORD COUNT TARGETS PER SECTION (you MUST meet these):
 ${sectionTargets}
-TOTAL TARGET: 2500 words minimum. COUNT YOUR WORDS. If any section feels thin, add a real example, a comparison, specific numbers, or a mini case study.
+TOTAL TARGET: 3000 words minimum — this is a HARD requirement. COUNT YOUR WORDS. If any section feels thin, add a real example, a comparison, specific numbers, or a mini case study. Thin sections (< 200 words) are NOT acceptable.
 
 Rules:
 1. Current date: April 2026. Use "As of April 2026..." framing for pricing and features. NEVER reference 2023, 2024, or 2025 as "current" — those are the past.
@@ -384,50 +404,80 @@ Output: pure markdown. Start with # H1. No commentary before or after.`,
     );
     totalCost += estimateCost("gpt-4o-2024-11-20", draftRes.usage);
 
-    // ── Expansion pass: if draft < 1800 words, auto-expand thin sections ──
-    let finalDraftText = draftRes.text;
-    const draftWords = draftRes.text.split(/\s+/).length;
-    if (draftWords < 1800) {
-      console.log(`   ⚡ Draft too short (${draftWords}w) — running expansion pass...`);
+    // ── Expansion helper (reusable) ──────────────────────────────────────────
+    const runExpansionPass = async (text, currentWords, targetWords = 2600) => {
+      console.log(`   ⚡ Expansion pass (${currentWords}w → target ${targetWords}w)...`);
       const expandRes = await gpt(
         "gpt-4o-2024-11-20",
-        "You are an expert content editor. Expand the provided article to reach 2200+ words without repeating yourself. Add real examples, specific numbers, comparisons, and practical tips to thin sections.",
-        `This article is too short (${draftWords} words, target: 2200+). Expand ALL thin sections (any section under 200 words). Add:
-- Concrete examples with real numbers (pricing, percentages, time saved)
-- Step-by-step walkthroughs where applicable
-- Comparison details (feature X in tool A vs tool B)
-- Common use cases with specific scenarios
-- Tips or warnings the reader needs to know
+        "You are an expert content editor for a tech review publication. Expand the article to reach the target word count WITHOUT padding. Every sentence you add must provide real value: concrete examples, specific numbers, step-by-step walkthroughs, real-world scenarios, or comparison data.",
+        `This article needs expansion. Current: ${currentWords} words. Target: ${targetWords}+ words (hard minimum 2000).
 
-Keep the same structure (headings, tables, [AFFILIATE:...] tags). Do NOT add filler. Every added sentence must add value.
+EXPANSION RULES:
+1. Expand EVERY section that is under 250 words — add examples, sub-points, real numbers
+2. For comparison articles: expand each feature row in tables with explanation paragraphs
+3. For how-to articles: add sub-steps, screenshots descriptions, troubleshooting notes
+4. For listicles: deepen each item with more pros/cons, pricing details, use cases
+5. For reviews: add Performance, Real-World Testing, and Alternatives sections if missing
+6. Keep all [AFFILIATE:brand] tags intact
+7. Keep all markdown structure (headings, tables, lists) — add content, don't remove
+8. NEVER add filler phrases like "In conclusion", "It's worth noting", "As we mentioned"
 
-ARTICLE TO EXPAND:
-${draftRes.text}
+ARTICLE TO EXPAND (${currentWords} words — EXPAND TO ${targetWords}+):
+${text}
 
-Output: the full expanded markdown article only.`,
+Output: the COMPLETE expanded markdown article starting with # heading. No preamble.`,
         16000
       );
       totalCost += estimateCost("gpt-4o-2024-11-20", expandRes.usage);
-      finalDraftText = expandRes.text;
-      const expandedWords = finalDraftText.split(/\s+/).length;
-      console.log(`   ✅ Expanded: ${draftWords}w → ${expandedWords}w`);
+      const newWords = expandRes.text.split(/\s+/).length;
+      console.log(`   ✅ Expanded: ${currentWords}w → ${newWords}w`);
+      return expandRes.text;
+    };
+
+    // ── Pass 1: Pre-polish expansion if draft is short ────────────────────
+    let finalDraftText = draftRes.text;
+    const draftWords = draftRes.text.split(/\s+/).length;
+    console.log(`   📏 Draft: ${draftWords}w`);
+    if (draftWords < 2000) {
+      finalDraftText = await runExpansionPass(draftRes.text, draftWords, 2600);
     }
 
-    // Polish — use the (possibly expanded) finalDraftText
+    // ── Polish — CRITICAL: must NOT reduce word count ────────────────────
+    const polishWords = finalDraftText.split(/\s+/).length;
     const polishRes = await gpt(
       "gpt-4o-mini",
-      "You are a strict editor for a top-tier tech review publication. Improve the draft, don't rewrite it. Remove AI-tells, tighten prose, ensure every tool has real pros AND cons. Keep all [AFFILIATE:...] tags intact. Keep structure (headings, tables, lists). Do NOT shorten sections. Output: the full revised markdown only.",
+      `You are a senior editor for a top-tier tech review publication. Your job: IMPROVE quality, NEVER reduce length.
+
+STRICT RULES:
+1. NEVER remove paragraphs, sections, or list items — only rewrite individual sentences
+2. NEVER shorten the article — if unsure, leave the original sentence intact
+3. Remove AI-tells: "in today's fast-paced world", "it's important to note", "let's dive in", "revolutionary", "game-changer", "seamless", "cutting-edge", "unlock", "harness the power", "in the realm of"
+4. Fix grammar errors and awkward phrasing
+5. Ensure every tool has both pros AND cons stated clearly
+6. Keep all [AFFILIATE:...] tags EXACTLY as-is (don't touch them)
+7. Keep all markdown structure: headings, tables, bullet lists, numbered lists, blockquotes
+8. MINIMUM output: ${Math.max(polishWords - 50, 1800)} words (you started with ${polishWords} — DO NOT go below this)
+9. Output: the complete revised markdown only — start with # heading, no commentary`,
       finalDraftText,
       16000
     );
     totalCost += estimateCost("gpt-4o-mini", polishRes.usage);
+
+    // ── Pass 2: Post-polish rescue if polish trimmed too much ─────────────
+    const postPolishWords = polishRes.text.split(/\s+/).length;
+    console.log(`   📏 Post-polish: ${postPolishWords}w (was ${polishWords}w)`);
+    let finalText = polishRes.text;
+    if (postPolishWords < 1900) {
+      console.log(`   🚨 Polish trimmed too much! Running rescue expansion...`);
+      finalText = await runExpansionPass(polishRes.text, postPolishWords, 2200);
+    }
 
     // Affiliate links
     const affiliates = await supa("GET", "affiliates?status=eq.active");
     const tagRegex = /\[AFFILIATE:([^\]]+)\]([^\[]+)\[\/AFFILIATE\]/gi;
     const affiliatesUsed = new Set();
     const firstSeen = new Map();
-    let linked = polishRes.text.replace(tagRegex, (_, brand, name) => {
+    let linked = finalText.replace(tagRegex, (_, brand, name) => {
       const clean = brand.trim().toLowerCase();
       const aff = affiliates.find((a) => a.brand.toLowerCase() === clean);
       if (!aff) return name;
@@ -755,12 +805,18 @@ async function publishAllDrafts(maxCount = 10) {
     const qa = qualityGate(article);
     if (!qa.pass) {
       skippedCount++;
-      console.log(`   ⏩ skip "${article.title.slice(0, 50)}": ${qa.issues.join(", ")}`);
+      const issuesSummary = qa.issues.join(", ");
+      console.log(`   ⏩ skip "${article.title.slice(0, 50)}": ${issuesSummary}`);
       // Mark as qa_failed so it doesn't clog the queue on future runs
       await supa("PATCH", `articles?id=eq.${article.id}`, {
         status: "qa_failed",
         quality_score: 0,
       }).catch(() => {});
+      // Notify #alertas with failure reason (so you can fix prompts faster)
+      notifyAlert(
+        `🚫 **QA Failed:** ${article.title.slice(0, 70)}\n\n**Razones:** ${issuesSummary}\n**Palabras:** ${article.word_count || 0}w`,
+        "warning"
+      ).catch(() => {});
       continue;
     }
 
@@ -845,7 +901,8 @@ async function publishAllDrafts(maxCount = 10) {
           article.word_count || 0,
           affiliateNames,
           qScore,
-          article.featured_image_url || null
+          article.featured_image_url || null,
+          article.article_type || 'article'
         ).catch(() => {});
       }
     } catch (e) {
