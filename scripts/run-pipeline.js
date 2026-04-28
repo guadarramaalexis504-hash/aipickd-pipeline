@@ -150,6 +150,58 @@ async function wp(method, endpoint, body) {
   }
 }
 
+// Generate Table of Contents from markdown headings
+function generateToC(md) {
+  const headings = [];
+  const headingRegex = /^(#{2,3})\s+(.+)$/gm;
+  let m;
+  while ((m = headingRegex.exec(md)) !== null) {
+    const level = m[1].length;
+    const text = m[2].trim().replace(/\*\*/g, "").replace(/`/g, "");
+    const anchor = text.toLowerCase().replace(/[^a-z0-9\s-]/g, "").replace(/\s+/g, "-").replace(/-+/g, "-");
+    // Skip FAQ, Key Takeaways, Quick Verdict from ToC
+    if (/^(faq|frequently asked|key takeaways|quick verdict|quick picks)/i.test(text)) {
+      headings.push({ level, text, anchor, skip: true });
+    } else {
+      headings.push({ level, text, anchor, skip: false });
+    }
+  }
+  const tocHeadings = headings.filter(h => !h.skip);
+  if (tocHeadings.length < 5) return ""; // Only add ToC if 5+ headings
+  const items = tocHeadings.map(h => {
+    const indent = h.level === 3 ? "  " : "";
+    return `${indent}- [${h.text}](#${h.anchor})`;
+  }).join("\n");
+  return `\n\n**📋 Table of Contents**\n\n${items}\n\n---\n\n`;
+}
+
+// Inject ToC after first heading and Quick Verdict block
+function injectToC(md) {
+  const wordCount = md.split(/\s+/).length;
+  if (wordCount < 1500) return md; // Only for long articles
+  const toc = generateToC(md);
+  if (!toc) return md;
+  // Insert after the first H1, after Quick Verdict blockquote and Key Takeaways if present
+  // Find insertion point: after the first major block (blockquote / Key Takeaways / first paragraph)
+  const insertAfterPatterns = [
+    /(\*\*Key Takeaways\*\*[\s\S]*?\n\n)/, // After Key Takeaways block
+    /(> \*\*Quick Verdict\*\*[\s\S]*?\n\n)/, // After Quick Verdict blockquote
+    /(^# .+\n\n)/, // After H1 title
+  ];
+  for (const pattern of insertAfterPatterns) {
+    const match = md.match(pattern);
+    if (match) {
+      const insertPos = md.indexOf(match[0]) + match[0].length;
+      // Only insert if there's no ToC already
+      if (!md.includes("📋 Table of Contents")) {
+        return md.slice(0, insertPos) + toc + md.slice(insertPos);
+      }
+      return md;
+    }
+  }
+  return md;
+}
+
 // Simple MD→HTML (same as publish-one-article.js)
 function mdToHtml(md) {
   md = (md || "").replace(/<!--[\s\S]*?-->/g, "");
@@ -221,6 +273,55 @@ async function generateOne() {
   let totalCost = 0;
 
   try {
+    // Article-type-specific structural requirements
+    const typeRequirements = {
+      comparison: `ARTICLE TYPE: COMPARISON
+Required sections (all mandatory):
+1. Quick Verdict (who wins overall)
+2. Overview (what both tools do)
+3. Feature Comparison (markdown table: Feature | Tool A | Tool B, min 8 rows)
+4. Pricing Comparison (markdown table with all tiers)
+5. Performance & Speed
+6. Ease of Use
+7. Integrations & Compatibility
+8. Best Use Cases (Tool A for X, Tool B for Y)
+9. Pros & Cons (table for each tool)
+10. Final Verdict & Recommendation
+11. FAQ`,
+      review: `ARTICLE TYPE: REVIEW
+Required sections (all mandatory):
+1. Quick Verdict (2-3 sentences)
+2. What Is [Tool] (overview)
+3. Key Features (deep-dive, one H3 per major feature)
+4. Pricing & Plans (markdown table: Plan | Price | Features)
+5. Pros & Cons (markdown table)
+6. Performance in Practice (real use cases, specific results)
+7. How It Compares (brief comparison with 2 competitors)
+8. Who Should Use It (target audience breakdown)
+9. Setup & Getting Started
+10. FAQ`,
+      "how-to": `ARTICLE TYPE: HOW-TO GUIDE
+Required sections (all mandatory):
+1. What You'll Need (prerequisites + tools list)
+2. Quick Overview (what we'll accomplish)
+3. Step-by-Step Instructions (numbered, min 6 steps, each 150+ words)
+4. Common Mistakes to Avoid
+5. Pro Tips & Shortcuts
+6. Troubleshooting (min 3 common issues + solutions)
+7. Real-World Examples
+8. FAQ`,
+      list: `ARTICLE TYPE: LISTICLE
+Required sections (all mandatory):
+1. Quick Picks (top 3 for different use cases)
+2. How We Evaluated (criteria used)
+3. One H2 per tool/item (min 7 items, each 200+ words with pros/cons + pricing)
+4. Comparison Table (all tools: Name | Best For | Price | Rating)
+5. How to Choose (decision guide)
+6. FAQ`,
+    };
+    const typeGuide = typeRequirements[kw.article_type] || `ARTICLE TYPE: ${(kw.article_type || "guide").toUpperCase()}
+Ensure deep coverage with at least 8 substantive H2 sections.`;
+
     // Outline — request at least 8 sections with explicit word targets
     const outlineRes = await gpt(
       "gpt-4o-2024-11-20",
@@ -233,10 +334,13 @@ Intent: ${kw.intent}
 Target word count: 2500
 Audience: Small business owners, marketers, creators evaluating AI tools.
 
+${typeGuide}
+
 CRITICAL: All references must be 2026. If the keyword has a year, use 2026. Never use 2023, 2024, or 2025.
 CRITICAL: The outline MUST have at least 8 H2 sections. Each section must have word_target >= 200.
+CRITICAL: Include a dedicated "FAQ" section as the last H2 with 6 questions.
 
-Return a JSON object with keys: title (50-60 chars, includes keyword and "2026"), slug (kebab-case with "2026"), meta_description (150-160 chars, mentions 2026), primary_keyword, lsi_keywords (array of 5-7), target_word_count (must be 2500), sections (array of AT LEAST 8 objects with: heading, level, bullets array of 4-6 items, word_target number >= 200), faqs (array of 6 question strings), internal_link_ideas (array of strings).`,
+Return a JSON object with keys: title (50-60 chars, includes keyword and "2026"), slug (kebab-case with "2026"), meta_description (150-160 chars, mentions 2026), primary_keyword, lsi_keywords (array of 5-7), target_word_count (must be 2500), article_type, sections (array of AT LEAST 8 objects with: heading, level, bullets array of 4-6 items, word_target number >= 200), faqs (array of 6 question strings), internal_link_ideas (array of strings).`,
       2500,
       true
     );
@@ -255,6 +359,9 @@ Return a JSON object with keys: title (50-60 chars, includes keyword and "2026")
 
 ${JSON.stringify(outline)}
 
+ARTICLE TYPE REQUIREMENTS:
+${typeGuide}
+
 WORD COUNT TARGETS PER SECTION (you MUST meet these):
 ${sectionTargets}
 TOTAL TARGET: 2500 words minimum. COUNT YOUR WORDS. If any section feels thin, add a real example, a comparison, specific numbers, or a mini case study.
@@ -262,15 +369,15 @@ TOTAL TARGET: 2500 words minimum. COUNT YOUR WORDS. If any section feels thin, a
 Rules:
 1. Current date: April 2026. Use "As of April 2026..." framing for pricing and features. NEVER reference 2023, 2024, or 2025 as "current" — those are the past.
 2. Show pros AND cons of every tool. Be specific: cost, limitations, learning curve.
-3. Use markdown comparison tables (at least one) with real specs.
+3. ⚠️ Use at least ONE markdown comparison table with real specs (required).
 4. At first mention of a product, wrap it: [AFFILIATE:brand_name_lowercase]Product Name[/AFFILIATE]
-5. Add a 'Quick verdict' blockquote at the very top (before the intro) — 2-3 sentences with a clear recommendation.
-6. AVOID AI-tells: "in today's fast-paced world", "it's important to note", "let's dive in", "revolutionary", "game-changer", "seamless", "cutting-edge", "unlock", "harness the power".
-7. Use 2nd person ("you"), active voice, contractions OK.
-8. ⚠️ MINIMUM 2000 WORDS. This is non-negotiable. Short sections must be expanded with examples.
-9. Cover EVERY section from the outline fully. DO NOT skip sections or write one-liners.
-10. End with a full FAQ section answering all ${(outline.faqs || []).length} questions in detail.
-11. Add a "Key Takeaways" box right after the Quick verdict.
+5. Add a '> **Quick Verdict:**' blockquote at the very top (before the intro) — 2-3 sentences with a clear recommendation.
+6. Add a '**Key Takeaways**' bullet list right after the Quick Verdict.
+7. AVOID AI-tells: "in today's fast-paced world", "it's important to note", "let's dive in", "revolutionary", "game-changer", "seamless", "cutting-edge", "unlock", "harness the power".
+8. Use 2nd person ("you"), active voice, contractions OK.
+9. ⚠️ MINIMUM 2000 WORDS — this is non-negotiable. Short sections must be expanded with examples.
+10. Cover EVERY section from the outline fully. DO NOT skip sections or write one-liners.
+11. End with a full "## FAQ" section answering all ${(outline.faqs || []).length} questions in detail (each answer min 3 sentences).
 
 Output: pure markdown. Start with # H1. No commentary before or after.`,
       16000
@@ -342,7 +449,8 @@ Output: the full expanded markdown article only.`,
       slug: outline.slug,
       meta_description: outline.meta_description,
       content_markdown: linked,
-      article_type: kw.article_type,
+      article_type: kw.article_type || outline.article_type,
+      primary_keyword: outline.primary_keyword || kw.keyword,
       status: "draft",
       generated_by: "gpt-only",
       word_count: linked.split(/\s+/).length,
@@ -426,29 +534,36 @@ function qualityGate(article) {
   const h2Count = (md.match(/^##\s+/gm) || []).length;
   if (h2Count < 5) issues.push(`only ${h2Count} H2 headings (min 5)`);
 
+  // Keyword density: primary keyword must appear at least 3 times
+  if (article.primary_keyword) {
+    const kw = article.primary_keyword.toLowerCase().trim();
+    const bodyLower = md.toLowerCase();
+    // Escape regex special chars
+    const kwEscaped = kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const kwCount = (bodyLower.match(new RegExp(kwEscaped, "g")) || []).length;
+    if (kwCount < 2) issues.push(`keyword "${kw}" only appears ${kwCount}× (min 2)`);
+  }
+
+  // FAQ section check — needed for FAQPage schema
+  const hasFaq = /^##\s+(?:FAQ|Frequently Asked Questions|Common Questions)/im.test(md);
+  if (!hasFaq) issues.push("missing FAQ section (needed for schema)");
+
   return { pass: issues.length === 0, issues };
 }
 
-// --- DALL-E image generation (inline with publish) ---
-async function generateFeaturedImage(title, slug, postId) {
-  try {
-    const prompt = `Modern editorial hero image for article: "${title}". Clean minimalist illustration style, abstract geometric concepts, vibrant blues and purples with green accents, 16:9, flat design. NO text, NO logos, NO faces, NO brand names.`;
-    const res = await fetch("https://api.openai.com/v1/images/generations", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "content-type": "application/json" },
-      body: JSON.stringify({ model: "dall-e-3", prompt, n: 1, size: "1792x1024", quality: "standard" }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(`DALL-E: ${JSON.stringify(data).slice(0, 200)}`);
-    const imgRes = await fetch(data.data[0].url);
-    const buffer = Buffer.from(await imgRes.arrayBuffer());
-    const auth = Buffer.from(`${WP_USERNAME}:${WP_ADMIN_PASSWORD}`).toString("base64");
+// --- DALL-E image generation + Unsplash fallback ---
+async function generateFeaturedImage(title, slug, postId, articleType = "article", primaryKeyword = "") {
+  const auth = Buffer.from(`${WP_USERNAME}:${WP_ADMIN_PASSWORD}`).toString("base64");
+
+  async function uploadBufferToWP(buffer, mimeType = "image/jpeg") {
+    const ext = mimeType === "image/jpeg" ? "jpg" : "png";
     const uploadRes = await fetch("https://aipickd.com/wp-json/wp/v2/media", {
       method: "POST",
       headers: {
         Authorization: `Basic ${auth}`,
-        "Content-Type": "image/png",
-        "Content-Disposition": `attachment; filename="${slug}.png"`,
+        "Content-Type": mimeType,
+        "Content-Disposition": `attachment; filename="${slug}.${ext}"`,
+        "User-Agent": "Mozilla/5.0 AIPickd-pipeline/1.0",
       },
       body: buffer,
     });
@@ -456,8 +571,55 @@ async function generateFeaturedImage(title, slug, postId) {
     if (!uploadRes.ok) throw new Error(`WP upload: ${uploadRes.status}`);
     await wp("POST", `posts/${postId}`, { featured_media: uploadData.id });
     return uploadData.source_url;
+  }
+
+  // Strategy 1: DALL-E 3 with type-specific prompt
+  try {
+    const typeStyles = {
+      comparison: "split-panel composition showing two contrasting tech concepts side by side",
+      review: "product spotlight editorial — single tool in hero position, feature highlights",
+      "how-to": "step-by-step process visualization, clean numbered flow diagram",
+      list: "grid mosaic of diverse tech icons representing multiple AI tools",
+      guide: "roadmap or journey visualization, progressive steps leading to a goal",
+    };
+    const styleHint = typeStyles[articleType] || "editorial tech illustration";
+    const kwHint = primaryKeyword ? ` (topic: ${primaryKeyword})` : "";
+    const dallePrompt = `${styleHint}${kwHint}. Modern tech editorial style, abstract geometric shapes, deep navy and electric blue palette with emerald green accents, 16:9 landscape. Clean flat design, high contrast. Absolutely NO text, NO logos, NO UI elements, NO faces, NO brand names.`;
+
+    const res = await fetch("https://api.openai.com/v1/images/generations", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "content-type": "application/json" },
+      body: JSON.stringify({ model: "dall-e-3", prompt: dallePrompt, n: 1, size: "1792x1024", quality: "standard" }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(`DALL-E: ${JSON.stringify(data).slice(0, 200)}`);
+    const imgRes = await fetch(data.data[0].url);
+    const buffer = Buffer.from(await imgRes.arrayBuffer());
+    return await uploadBufferToWP(buffer, "image/png");
   } catch (e) {
-    return null; // non-fatal — article publishes even if image fails
+    console.log(`   ⚠️ DALL-E failed (${e.message.slice(0, 60)}), trying Unsplash...`);
+  }
+
+  // Strategy 2: Unsplash fallback
+  try {
+    const UNSPLASH_KEY = env.UNSPLASH_ACCESS_KEY;
+    if (!UNSPLASH_KEY) throw new Error("No Unsplash key");
+    const query = (primaryKeyword || title).split(" ").slice(0, 3).join(" ");
+    const unsplashRes = await fetch(
+      `https://api.unsplash.com/photos/random?query=${encodeURIComponent(query)}&orientation=landscape&client_id=${UNSPLASH_KEY}`,
+      { signal: AbortSignal.timeout(10000) }
+    );
+    if (!unsplashRes.ok) throw new Error(`Unsplash: ${unsplashRes.status}`);
+    const photo = await unsplashRes.json();
+    const imgUrl = photo.urls?.regular;
+    if (!imgUrl) throw new Error("No image URL from Unsplash");
+    const imgRes = await fetch(imgUrl);
+    const buffer = Buffer.from(await imgRes.arrayBuffer());
+    console.log(`   📸 Unsplash fallback: "${photo.alt_description || query}" by ${photo.user?.name}`);
+    return await uploadBufferToWP(buffer, "image/jpeg");
+  } catch (e) {
+    console.log(`   ⚠️ Unsplash fallback failed: ${e.message.slice(0, 60)}`);
+    return null;
   }
 }
 
@@ -552,6 +714,11 @@ async function publishAllDrafts(maxCount = 10) {
   const published = [];
   let skippedCount = 0;
 
+  // Pre-load published titles for duplicate detection
+  const publishedArticles = await supa("GET", "articles?status=eq.published&select=title,slug").catch(() => []);
+  const normalizeTitle = (s) => (s || "").toLowerCase().replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, " ").trim();
+  const publishedTitles = (publishedArticles || []).map(a => normalizeTitle(a.title));
+
   // Get WP categories once
   const cats = await wp("GET", "categories?per_page=20&_fields=id,slug");
   const catMap = {};
@@ -565,6 +732,24 @@ async function publishAllDrafts(maxCount = 10) {
   };
 
   for (const article of drafts) {
+    // Duplicate detection — skip if very similar title already published
+    const normNewTitle = normalizeTitle(article.title);
+    const isDuplicate = publishedTitles.some(existing => {
+      const words = normNewTitle.split(" ");
+      // Check if 5+ consecutive words match an existing title
+      for (let i = 0; i <= words.length - 5; i++) {
+        const phrase = words.slice(i, i + 5).join(" ");
+        if (phrase.length > 20 && existing.includes(phrase)) return true;
+      }
+      return false;
+    });
+    if (isDuplicate) {
+      skippedCount++;
+      console.log(`   ⏩ skip "${article.title.slice(0, 50)}": duplicate of published article`);
+      await supa("PATCH", `articles?id=eq.${article.id}`, { status: "qa_failed" }).catch(() => {});
+      continue;
+    }
+
     // Quality gate + cleanup
     article.content_markdown = aggressiveClean(article.content_markdown);
     const qa = qualityGate(article);
@@ -578,6 +763,9 @@ async function publishAllDrafts(maxCount = 10) {
       }).catch(() => {});
       continue;
     }
+
+    // Inject Table of Contents for long articles
+    article.content_markdown = injectToC(article.content_markdown);
 
     try {
       const html = mdToHtml(article.content_markdown);
@@ -595,7 +783,10 @@ async function publishAllDrafts(maxCount = 10) {
 
       // Post-publish: add image + schema + ping (parallel)
       if (WP_STATUS === "publish") {
-        const imgUrl = await generateFeaturedImage(article.title, article.slug, wpPost.id);
+        const imgUrl = await generateFeaturedImage(
+          article.title, article.slug, wpPost.id,
+          article.article_type, article.primary_keyword
+        );
         if (imgUrl) {
           const schemaBlock = buildSchemaBlock(article, wpPost.link, imgUrl);
           await wp("POST", `posts/${wpPost.id}`, { content: html + schemaBlock });
@@ -611,9 +802,31 @@ async function publishAllDrafts(maxCount = 10) {
         wp_post_id: wpPost.id,
         wp_url: wpPost.link,
         published_at: new Date().toISOString(),
+        quality_score: calcQualityScore(article.word_count, []),
       });
       published.push({ title: article.title, wp_id: wpPost.id, url: wpPost.link });
       console.log(`   ✓ ${WP_STATUS === "publish" ? "LIVE" : "Draft"} WP #${wpPost.id}: ${article.title.slice(0, 55)}`);
+
+      // Post-publish URL verification (async, non-blocking)
+      if (WP_STATUS === "publish" && wpPost.link) {
+        setTimeout(async () => {
+          try {
+            const verifyRes = await fetch(wpPost.link, {
+              signal: AbortSignal.timeout(15000),
+              headers: { "User-Agent": "AIPickd-verify/1.0" },
+            });
+            if (!verifyRes.ok) {
+              console.log(`   ⚠️ Post-publish verify: ${wpPost.link} → ${verifyRes.status}`);
+              notifyAlert(
+                `⚠️ Artículo publicado pero URL retorna **${verifyRes.status}**\n${wpPost.link}`,
+                "warning"
+              ).catch(() => {});
+            } else {
+              console.log(`   ✅ URL verified: ${verifyRes.status} (${wpPost.link.slice(-40)})`);
+            }
+          } catch (e) { /* non-fatal */ }
+        }, 8000); // Wait 8s for WP cache to warm up
+      }
       // Fire-and-forget rich Discord notification
       if (WP_STATUS === "publish") {
         // Calculate quality score from word count + issues (article already passed QA so 0 issues)
@@ -708,6 +921,31 @@ async function publishAllDrafts(maxCount = 10) {
       }
     }
   }
+
+  // --- Keyword queue health check ---
+  try {
+    const queuedKwRes = await supa("GET", "keywords?status=eq.queued&select=id");
+    const queueCount = Array.isArray(queuedKwRes) ? queuedKwRes.length : 0;
+    console.log(`📋 Keywords in queue: ${queueCount}`);
+    if (queueCount < 30) {
+      notifyAlert(
+        `📋 **Cola de keywords baja: ${queueCount} restantes**\nEl pipeline se va a quedar sin contenido pronto. Agregar más keywords en Supabase → tabla \`keywords\`.`,
+        queueCount < 10 ? "high" : "warning"
+      ).catch(() => {});
+    }
+  } catch {}
+
+  // --- Auto-archive qa_failed articles older than 7 days ---
+  try {
+    const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString();
+    const archived = await supa(
+      "PATCH",
+      `articles?status=eq.qa_failed&created_at=lt.${sevenDaysAgo}`,
+      { status: "archived" }
+    );
+    const archivedCount = Array.isArray(archived) ? archived.length : 0;
+    if (archivedCount > 0) console.log(`🗄️  Archived ${archivedCount} old qa_failed articles`);
+  } catch {}
 
   // --- Summary ---
   const secs = ((Date.now() - runStart) / 1000).toFixed(1);
