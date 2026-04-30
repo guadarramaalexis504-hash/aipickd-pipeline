@@ -259,18 +259,44 @@ function estimateCost(model, usage) {
 
 // --- Generation (GPT-only, proven working) ---
 async function generateOne() {
+  // Smart niche rotation — check what niches were generated in the last 24h
+  // If a niche produced 3+ articles today, deprioritize its keywords
+  const today = new Date().toISOString().slice(0, 10);
+  let overloadedNicheIds = new Set();
+  try {
+    const todayArts = await supa("GET", `articles?created_at=gte.${today}&select=niche_id`);
+    const nicheCounts = {};
+    for (const a of (todayArts || [])) {
+      nicheCounts[a.niche_id] = (nicheCounts[a.niche_id] || 0) + 1;
+    }
+    overloadedNicheIds = new Set(
+      Object.entries(nicheCounts).filter(([, c]) => c >= 3).map(([id]) => id)
+    );
+    if (overloadedNicheIds.size > 0) {
+      console.log(`   🔄 Niche rotation: avoiding overloaded niches today (${overloadedNicheIds.size} niches with 3+ articles)`);
+    }
+  } catch {}
+
   // Fetch top 5 queued keywords — sorted by priority DESC, then search_volume DESC
   const keywords = await supa(
     "GET",
-    "keywords?status=eq.queued&assigned_article_id=is.null&order=priority.desc,search_volume.desc&limit=5&select=*,niche:niches(slug,name)"
+    "keywords?status=eq.queued&assigned_article_id=is.null&order=priority.desc,search_volume.desc&limit=10&select=*,niche:niches(slug,name)"
   );
   if (!keywords || keywords.length === 0) {
     return { skipped: true, reason: "No queued keywords" };
   }
+  // (sortedKeywords is built below after overload check)
 
   // Per-keyword failure guard: skip keywords that have already failed 3+ times
+  // Also apply smart niche rotation: prefer keywords from non-overloaded niches
   let kw = null;
-  for (const candidate of keywords) {
+  // Sort so non-overloaded niches come first, then overloaded (fallback)
+  const sortedKeywords = [...(keywords || [])].sort((a, b) => {
+    const aOverloaded = overloadedNicheIds.has(a.niche_id) ? 1 : 0;
+    const bOverloaded = overloadedNicheIds.has(b.niche_id) ? 1 : 0;
+    return aOverloaded - bOverloaded; // non-overloaded first
+  });
+  for (const candidate of sortedKeywords) {
     const failedRows = await supa("GET", `articles?keyword_id=eq.${candidate.id}&status=eq.qa_failed&select=id`).catch(() => []);
     const failCount = Array.isArray(failedRows) ? failedRows.length : 0;
     if (failCount >= 3) {
@@ -515,6 +541,24 @@ STRICT RULES:
     // Format numbers for readability (1000 → 1,000 etc.)
     linked = formatNumbers(linked);
 
+    // Generate 2 A/B title variants via GPT-mini (cheap, fire-and-forget)
+    let titleVariants = [];
+    try {
+      const varRes = await gpt(
+        "gpt-4o-mini",
+        "You are an SEO headline specialist. Output JSON only.",
+        `Generate 2 alternative SEO title variants for this article.
+Primary title: "${outline.title}"
+Primary keyword: "${kw.keyword}"
+Rules: slightly different angle or emphasis, same keyword, keep "2026", under 65 chars each.
+Return JSON: { "variants": ["Title 1", "Title 2"] }`,
+        200,
+        true
+      );
+      const varData = JSON.parse(varRes.text);
+      titleVariants = Array.isArray(varData.variants) ? varData.variants.slice(0, 2) : [];
+    } catch {}
+
     // Insert article
     const inserted = await supa("POST", "articles", {
       keyword_id: kw.id,
@@ -530,6 +574,8 @@ STRICT RULES:
       word_count: linked.split(/\s+/).length,
       generation_cost_usd: Number(totalCost.toFixed(4)),
       affiliates_mentioned: [...affiliatesUsed],
+      // A/B title variants — stored for future testing (column may not exist yet, graceful fail)
+      ...(titleVariants.length > 0 ? { title_variants: titleVariants } : {}),
     });
     const article = Array.isArray(inserted) ? inserted[0] : inserted;
 
@@ -1010,15 +1056,17 @@ async function publishAllDrafts(maxCount = 10) {
         html = enhanceComparisonTables(html);
       }
 
-      // Inject Best Deal callout for affiliate articles
-      const affiliatesForDeal = await supa("GET", "affiliates?status=eq.active&select=brand,base_url").catch(() => []);
-      if (Array.isArray(affiliatesForDeal) && affiliatesForDeal.length > 0 && article.affiliates_mentioned?.length > 0) {
-        const dealLinks = (article.affiliates_mentioned || [])
-          .map(id => affiliatesForDeal.find(a => a.id === id || affiliatesForDeal.find(x => x.brand)))
-          .filter(Boolean)
-          .slice(0, 3)
-          .map(a => ({ name: a.brand, url: a.base_url }));
-        if (dealLinks.length >= 2) html = injectBestDeal(html, dealLinks);
+      // Inject Best Deal callout for affiliate articles that have active affiliates linked
+      const mentioned = Array.isArray(article.affiliates_mentioned) ? article.affiliates_mentioned : [];
+      if (mentioned.length >= 2) {
+        try {
+          const affIds = mentioned.slice(0, 5).join(',');
+          const affiliatesForDeal = await supa("GET", `affiliates?id=in.(${affIds})&status=eq.active&select=id,brand,base_url`);
+          if (Array.isArray(affiliatesForDeal) && affiliatesForDeal.length >= 2) {
+            const dealLinks = affiliatesForDeal.slice(0, 3).map(a => ({ name: a.brand, url: a.base_url }));
+            html = injectBestDeal(html, dealLinks);
+          }
+        } catch {}
       }
 
       // Generate WP tags via GPT
@@ -1197,6 +1245,13 @@ async function publishAllDrafts(maxCount = 10) {
       } catch (e) {
         console.log(`   ⚠️  internal-links failed: ${e.message.slice(0, 80)}`);
       }
+
+      // Ping sitemap after publishing (async, non-blocking)
+      try {
+        const sitemapUrl = `https://www.bing.com/indexnow?url=${encodeURIComponent('https://aipickd.com/sitemap.xml')}&key=${env.INDEXNOW_KEY || 'aipickd2026'}`;
+        fetch(sitemapUrl, { signal: AbortSignal.timeout(8000) }).catch(() => {});
+        console.log(`   🗺️  Sitemap ping fired (Bing)`);
+      } catch {}
     }
   }
 
