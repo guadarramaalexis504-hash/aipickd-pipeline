@@ -781,14 +781,37 @@ function buildSchemaBlock(article, wpLink, imageUrl) {
     "@type": isReview ? "Review" : "Article",
     "headline": article.title,
     "description": article.meta_description || "",
-    "image": imageUrl || "https://aipickd.com/wp-content/uploads/aipickd-og.png",
+    "image": {
+      "@type": "ImageObject",
+      "url": imageUrl || "https://aipickd.com/wp-content/uploads/aipickd-og.png",
+      "width": 1200,
+      "height": 630,
+    },
     "datePublished": new Date().toISOString(),
     "dateModified": new Date().toISOString(),
     "mainEntityOfPage": { "@type": "WebPage", "@id": wpLink },
-    "author": { "@type": "Organization", "name": "AIPickd", "url": "https://aipickd.com" },
+    "isAccessibleForFree": true,
+    "inLanguage": "en-US",
+    "wordCount": article.word_count || 0,
+    "author": {
+      "@type": "Organization",
+      "name": "AIPickd",
+      "url": "https://aipickd.com",
+      "logo": {
+        "@type": "ImageObject",
+        "url": "https://aipickd.com/wp-content/uploads/aipickd-logo.png",
+        "width": 600,
+        "height": 60,
+      },
+    },
     "publisher": {
       "@type": "Organization", "name": "AIPickd", "url": "https://aipickd.com",
-      "logo": { "@type": "ImageObject", "url": "https://aipickd.com/wp-content/uploads/aipickd-logo.png" },
+      "logo": {
+        "@type": "ImageObject",
+        "url": "https://aipickd.com/wp-content/uploads/aipickd-logo.png",
+        "width": 600,
+        "height": 60,
+      },
     },
   };
   if (isReview) {
