@@ -80,7 +80,16 @@ jobs:
 
       - name: Run pipeline (generate + publish)
         run: |
-          GEN="${{ github.event.inputs.gen_count || '1' }}"
+          # Weekend burst mode: generate 2 articles on Sat/Sun to boost weekly output
+          DAY_OF_WEEK=$(date -u +%u)  # 1=Mon ... 6=Sat, 7=Sun
+          if [ -n "${{ github.event.inputs.gen_count }}" ]; then
+            GEN="${{ github.event.inputs.gen_count }}"
+          elif [ "$DAY_OF_WEEK" -eq "6" ] || [ "$DAY_OF_WEEK" -eq "7" ]; then
+            GEN=2
+            echo "🗓️ Weekend burst mode: generating 2 articles (day $DAY_OF_WEEK)"
+          else
+            GEN=1
+          fi
           # Cap to 5 max even if user requests more
           if [ "$GEN" -gt 5 ]; then GEN=5; fi
           node scripts/run-pipeline.js --gen "$GEN"

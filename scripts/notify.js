@@ -304,10 +304,16 @@ async function notifyUptimeRestored(responseMs = null) {
 async function notifyPipeline(message, stats = {}) {
   const fields = [];
   if (stats.articlesGenerated !== undefined)
-    fields.push({ name: '📝 Artículos', value: String(stats.articlesGenerated), inline: true });
+    fields.push({ name: '🧠 Generados', value: String(stats.articlesGenerated), inline: true });
   if (stats.articlesPublished !== undefined)
     fields.push({ name: '📤 Publicados', value: String(stats.articlesPublished), inline: true });
-  if (stats.cost !== undefined)
+  if (stats.qaFailed !== undefined)
+    fields.push({ name: '🚫 QA Failed', value: String(stats.qaFailed), inline: true });
+  if (stats.costUsd !== undefined)
+    fields.push({ name: '💰 Costo run', value: `$${Number(stats.costUsd).toFixed(4)}`, inline: true });
+  if (stats.budgetPct !== undefined)
+    fields.push({ name: '📊 Budget día', value: `${progressBar(Math.min(stats.budgetPct, 100))} ${stats.budgetPct}%`, inline: false });
+  if (stats.cost !== undefined && stats.costUsd === undefined)
     fields.push({ name: '💰 Costo', value: `$${Number(stats.cost).toFixed(3)}`, inline: true });
   if (stats.duration !== undefined)
     fields.push({ name: '⏱️ Duración', value: `${stats.duration}s`, inline: true });
@@ -318,17 +324,21 @@ async function notifyPipeline(message, stats = {}) {
   if (stats.keywordsRemaining !== undefined)
     fields.push({ name: '🔑 Keywords en cola', value: String(stats.keywordsRemaining), inline: true });
 
-  const payload = {
-    username: 'AIPickd Pipeline ⚙️',
-    embeds: [{
-      title: '⚙️ Pipeline Status',
-      description: String(message).slice(0, 4000),
-      color: 0x5865F2,
-      fields,
-      footer: { text: 'aipickd.com • GitHub Actions' },
-      timestamp: new Date().toISOString(),
-    }],
+  const hasFailures = (stats.qaFailed || 0) > 0;
+  const color = (stats.articlesPublished || 0) > 0 ? 0x00cc66 : hasFailures ? 0xff9900 : 0x5865F2;
+
+  const embed = {
+    title: '⚙️ Pipeline Status',
+    description: String(message).slice(0, 2000),
+    color,
+    fields,
+    footer: { text: 'aipickd.com • GitHub Actions' },
+    timestamp: new Date().toISOString(),
   };
+
+  if (stats.runUrl) embed.url = stats.runUrl;
+
+  const payload = { username: 'AIPickd Pipeline ⚙️', embeds: [embed] };
 
   const result = await postWebhook(env.DISCORD_WEBHOOK_PIPELINE, payload);
   if (process.env.NOTIFY_DEBUG) console.log('[notify:pipeline]', result);
@@ -370,6 +380,8 @@ async function notifyDailyDigest(stats = {}) {
     todayArticlesList = [],
     todayQaFailed = 0,
     siteResponseMs = null,
+    costPerArticle = null,
+    projectedMonthlyCost = null,
   } = stats;
 
   const now = new Date();
@@ -418,6 +430,24 @@ async function notifyDailyDigest(stats = {}) {
       inline: true,
     },
   ];
+
+  // Cost per article + month-end projection
+  if (costPerArticle !== null && costPerArticle > 0) {
+    fields.push({
+      name: '💡 Costo/artículo (mes)',
+      value: `$${costPerArticle.toFixed(4)}`,
+      inline: true,
+    });
+  }
+  if (projectedMonthlyCost !== null && projectedMonthlyCost > 0) {
+    const projectedPct = (projectedMonthlyCost / 50) * 100;
+    const projEmoji = projectedPct >= 90 ? '🔴' : projectedPct >= 70 ? '🟡' : '🟢';
+    fields.push({
+      name: `${projEmoji} Proyección mes`,
+      value: `$${projectedMonthlyCost.toFixed(2)} (${projectedPct.toFixed(0)}%)`,
+      inline: true,
+    });
+  }
 
   // Optional quality metrics (shown if available)
   if (publishRate !== null) {

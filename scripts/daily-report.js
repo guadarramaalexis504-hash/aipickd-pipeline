@@ -127,6 +127,15 @@ async function checkSite() {
   const todayCost = todayArticles.reduce((s, a) => s + (parseFloat(a.generation_cost_usd) || 0), 0);
   const monthCost = monthArticles.reduce((s, a) => s + (parseFloat(a.generation_cost_usd) || 0), 0);
 
+  // Cost per article this month
+  const monthWithCost = monthArticles.filter(a => parseFloat(a.generation_cost_usd) > 0);
+  const costPerArticle = monthWithCost.length > 0 ? monthCost / monthWithCost.length : 0;
+
+  // Month-end cost projection (linear extrapolation)
+  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const dayOfMonth = now.getDate();
+  const projectedMonthlyCost = dayOfMonth > 0 ? (monthCost / dayOfMonth) * daysInMonth : monthCost;
+
   const lastArticle = todayArticles.length > 0
     ? { title: todayArticles[0].title, url: todayArticles[0].wp_url }
     : null;
@@ -167,6 +176,8 @@ async function checkSite() {
     todayArticlesList,
     todayQaFailed,
     siteResponseMs: site.ms,
+    costPerArticle,
+    projectedMonthlyCost,
   });
   console.log('\n✅ Daily digest sent to Discord #pipeline-status');
 
