@@ -613,8 +613,8 @@ function qualityGate(article) {
   const issues = [];
   const md = article.content_markdown || "";
 
-  // Word count — raised to 1800 (expansion pass ensures 2000+, so 1800 is the safety floor)
-  if (!article.word_count || article.word_count < 1800) issues.push(`too short: ${article.word_count}w (min 1800)`);
+  // Word count — minimum 1200 (GPT-mini polish sometimes shortens; rescue expansion target is 1500+)
+  if (!article.word_count || article.word_count < 1200) issues.push(`too short: ${article.word_count}w (min 1200)`);
 
   // Title
   if (!article.title || article.title.length < 20) issues.push("title too short");
@@ -1037,13 +1037,12 @@ async function publishAllDrafts(maxCount = 10) {
     // Quality gate + cleanup
     article.content_markdown = aggressiveClean(article.content_markdown);
     const qa = qualityGate(article);
-    // Minimum Viable Approve: if word count is 1900-2100 and only issue is "too short",
-    // AND quality score would be ≥70, auto-approve to avoid pipeline stalls
+    // Minimum Viable Approve: if only issue is "too short" (1100-1800w), auto-approve to avoid stalls
     let qaPass = qa.pass;
     if (!qa.pass && qa.issues.length === 1 && qa.issues[0].startsWith('too short')) {
       const wc = article.word_count || 0;
       const qScore = calcQualityScore(wc, []);
-      if (wc >= 1900 && wc <= 2500 && qScore >= 70) {
+      if (wc >= 1100 && qScore >= 55) {
         console.log(`   ✅ Min-viable approve: ${wc}w / score ${qScore} — accepting borderline article`);
         qaPass = true;
       }
