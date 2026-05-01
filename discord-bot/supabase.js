@@ -27,7 +27,7 @@ async function getStats() {
     supa('articles?status=eq.published&select=id'),
     supa(`articles?status=eq.published&published_at=gte.${monthStart}&select=id,generation_cost_usd`),
     supa(`articles?status=eq.published&published_at=gte.${today}&select=id,title`),
-    supa('keywords?status=eq.pending&select=id'),
+    supa('keywords?status=eq.queued&select=id'),
   ]);
 
   const monthCost = monthly.reduce((s, a) => s + parseFloat(a.generation_cost_usd || 0), 0);
@@ -99,12 +99,15 @@ async function getKeywordsQueue(count = 10) {
 
 async function getAffiliates() {
   const affiliates = await supa(
-    'affiliates?select=brand,status,commission_type,commission_value,application_date&order=application_date.desc'
+    'affiliates?select=brand,status,commission_type,commission_amount,commission_percentage,created_at&order=created_at.desc'
   );
   const byStatus = {};
   for (const a of affiliates) {
     if (!byStatus[a.status]) byStatus[a.status] = [];
-    byStatus[a.status].push(`${a.brand} (${a.commission_value}${a.commission_type === 'percentage' ? '%' : '$'})`);
+    const commission = a.commission_type === 'percentage'
+      ? `${a.commission_percentage}%`
+      : `$${a.commission_amount}`;
+    byStatus[a.status].push(`${a.brand} (${commission})`);
   }
   return { total: affiliates.length, by_status: byStatus };
 }
