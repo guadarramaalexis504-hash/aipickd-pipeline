@@ -3,18 +3,21 @@
  * AIPickd — Discord Bot con Claude AI
  *
  * Un asistente inteligente para AIPickd que vive en tu Discord.
- * Responde preguntas, da stats del pipeline, y ayuda con estrategia —
- * todo desde tu cel, sin necesidad de tener la laptop prendida.
+ * Responde preguntas, da stats del pipeline, y puede ACTUAR:
+ *   - Re-encolar artículos fallidos
+ *   - Disparar el pipeline manualmente
+ *   - Agregar keywords a la cola
+ *   - Revisar la salud del pipeline
+ *   - Ver los últimos runs de GitHub Actions
+ *
+ * Todo desde el cel, sin necesidad de tener la laptop prendida.
  *
  * Configuración:
  *   1. Crea tu bot en https://discord.com/developers/applications
  *   2. Activa "Message Content Intent" en Bot → Privileged Gateway Intents
- *   3. Copia el Token y ponlo en las env vars de Railway como DISCORD_BOT_TOKEN
- *   4. Invita el bot a tu server con: https://discord.com/api/oauth2/authorize?client_id=TU_CLIENT_ID&permissions=277025442816&scope=bot
- *
- * El bot responde cuando:
- *   - Lo @mencionas en cualquier canal
- *   - Escribes en un canal cuyo nombre contenga: claude, bot, aipickd-ai
+ *   3. Env vars en Railway: DISCORD_BOT_TOKEN, ANTHROPIC_API_KEY, ANTHROPIC_MODEL,
+ *      SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, GITHUB_TOKEN
+ *   4. Invita el bot con: https://discord.com/api/oauth2/authorize?client_id=TU_CLIENT_ID&permissions=277025442816&scope=bot
  */
 
 require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
@@ -27,7 +30,11 @@ const {
   getMonthlyCost,
   getKeywordsQueue,
   getAffiliates,
+  getPipelineHealth,
+  requeueFailedArticles,
+  addKeyword,
 } = require('./supabase');
+const { triggerPipelineRun, getLatestRuns } = require('./github');
 
 // ── Config ────────────────────────────────────────────────────────────────────
 const DISCORD_TOKEN   = process.env.DISCORD_BOT_TOKEN;
@@ -91,10 +98,19 @@ PERSONALIDAD:
 - Si no tienes info, usa las tools disponibles para obtenerla
 - Puedes ayudar con: SEO, ideas de contenido, copy de afiliados, análisis, estrategia
 
-IMPORTANTE: Si te preguntan sobre stats, artículos, costos o keywords → usa las tools, no adivines.`;
+CAPACIDADES DE ACCIÓN (puedes ejecutarlas cuando Alexis lo pida):
+- Re-encolar artículos fallidos → usa requeue_failed_articles
+- Disparar el pipeline ahora mismo → usa trigger_pipeline
+- Agregar keywords a la cola → usa add_keyword
+- Ver salud del pipeline → usa get_pipeline_health
+- Ver últimos runs de GitHub Actions → usa get_github_runs
+
+IMPORTANTE: Si te preguntan sobre stats, artículos, costos o keywords → usa las tools, no adivines.
+Antes de ejecutar acciones costosas (trigger_pipeline múltiples veces), confirma con Alexis.`;
 
 // ── Tools para Claude ─────────────────────────────────────────────────────────
 const TOOLS = [
+  // ── READ tools ──
   {
     name: 'get_pipeline_stats',
     description: 'Estadísticas del pipeline: artículos publicados, costo del mes, artículos hoy, keywords en cola.',
@@ -132,16 +148,70 @@ const TOOLS = [
     description: 'Estado de los programas de afiliados: aprobados, pendientes, rechazados.',
     input_schema: { type: 'object', properties: {}, required: [] },
   },
+  {
+    name: 'get_pipeline_health',
+    description: 'Salud del pipeline: si está atascado, horas desde último artículo, artículos fallidos, drafts listos.',
+    input_schema: { type: 'object', properties: {}, required: [] },
+  },
+  {
+    name: 'get_github_runs',
+    description: 'Últimos 5 runs del pipeline en GitHub Actions con su estado (success/failure/in_progress).',
+    input_schema: { type: 'object', properties: {}, required: [] },
+  },
+
+  // ── ACTION tools ──
+  {
+    name: 'requeue_failed_articles',
+    description: 'Re-encola todos los artículos con status qa_failed de vuelta a draft. El próximo cron los publicará.',
+    input_schema: { type: 'object', properties: {}, required: [] },
+  },
+  {
+    name: 'trigger_pipeline',
+    description: 'Dispara el pipeline de generación en GitHub Actions ahora mismo.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        gen_count: { type: 'number', description: 'Cuántos artículos generar (1-5, default 1)' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'add_keyword',
+    description: 'Agrega una keyword nueva a la cola de generación en Supabase.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        keyword:       { type: 'string', description: 'La keyword (ej: "best AI writing tools 2026")' },
+        article_type:  { type: 'string', description: 'Tipo: comparison, review, listicle, how-to (default: comparison)' },
+        search_volume: { type: 'number', description: 'Volumen de búsqueda mensual estimado (default: 0)' },
+        priority:      { type: 'number', description: 'Prioridad 1-10, mayor = antes (default: 5)' },
+      },
+      required: ['keyword'],
+    },
+  },
 ];
 
 async function runTool(name, input) {
   try {
     switch (name) {
-      case 'get_pipeline_stats':   return await getStats();
-      case 'get_recent_articles':  return await getRecentArticles(Math.min(input.count || 5, 20));
-      case 'get_monthly_cost':     return await getMonthlyCost();
-      case 'get_keywords_queue':   return await getKeywordsQueue(Math.min(input.count || 10, 50));
-      case 'get_affiliates':       return await getAffiliates();
+      // read
+      case 'get_pipeline_stats':    return await getStats();
+      case 'get_recent_articles':   return await getRecentArticles(Math.min(input.count || 5, 20));
+      case 'get_monthly_cost':      return await getMonthlyCost();
+      case 'get_keywords_queue':    return await getKeywordsQueue(Math.min(input.count || 10, 50));
+      case 'get_affiliates':        return await getAffiliates();
+      case 'get_pipeline_health':   return await getPipelineHealth();
+      case 'get_github_runs':       return await getLatestRuns();
+      // action
+      case 'requeue_failed_articles': return await requeueFailedArticles();
+      case 'trigger_pipeline':        return await triggerPipelineRun(input.gen_count || 1);
+      case 'add_keyword':             return await addKeyword(
+                                        input.keyword,
+                                        input.article_type || 'comparison',
+                                        input.search_volume || 0,
+                                        input.priority || 5
+                                      );
       default: return { error: `Tool desconocida: ${name}` };
     }
   } catch (e) {
@@ -227,6 +297,7 @@ async function sendChunked(channel, text, replyTo) {
 discord.once(Events.ClientReady, (c) => {
   console.log(`✅ AIPickd Bot conectado como ${c.user.tag}`);
   console.log(`   Servidor(es): ${c.guilds.cache.map((g) => g.name).join(', ')}`);
+  console.log(`   Herramientas: ${TOOLS.length} (${TOOLS.filter((t) => ['requeue_failed_articles', 'trigger_pipeline', 'add_keyword'].includes(t.name)).length} de acción)`);
 });
 
 discord.on(Events.MessageCreate, async (message) => {
@@ -243,11 +314,6 @@ discord.on(Events.MessageCreate, async (message) => {
     console.error('Error respondiendo:', err.message);
     await message.reply('Hubo un error 😅 Intenta de nuevo en un momento.').catch(() => {});
   }
-});
-
-// Typing indicator cada 8s para respuestas largas
-discord.on(Events.MessageCreate, async (message) => {
-  // handled above
 });
 
 // ── Arrancar ──────────────────────────────────────────────────────────────────

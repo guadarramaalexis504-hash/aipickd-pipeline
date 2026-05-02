@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 /**
- * AIPickd Discord Bot — Supabase queries
- * Provides data tools for the Claude-powered Discord bot
+ * AIPickd Discord Bot — Supabase queries + writes
+ * Provides read AND write tools for the Claude-powered Discord bot
  */
 
 const SUPA_URL = process.env.SUPABASE_URL;
 const SUPA_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 async function supa(endpoint) {
   const r = await fetch(`${SUPA_URL}/rest/v1/${endpoint}`, {
@@ -17,6 +19,24 @@ async function supa(endpoint) {
   if (!r.ok) throw new Error(`Supabase ${r.status}: ${await r.text()}`);
   return r.json();
 }
+
+async function supaWrite(method, endpoint, body) {
+  const r = await fetch(`${SUPA_URL}/rest/v1/${endpoint}`, {
+    method,
+    headers: {
+      apikey: SUPA_KEY,
+      Authorization: `Bearer ${SUPA_KEY}`,
+      'Content-Type': 'application/json',
+      Prefer: 'return=representation',
+    },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error(`Supabase ${method} ${r.status}: ${await r.text()}`);
+  if (r.status === 204) return null;
+  return r.json();
+}
+
+// ── READ functions ────────────────────────────────────────────────────────────
 
 async function getStats() {
   const now = new Date();
@@ -87,7 +107,7 @@ async function getMonthlyCost() {
 
 async function getKeywordsQueue(count = 10) {
   const kws = await supa(
-    `keywords?status=eq.pending&order=priority.desc,search_volume.desc&limit=${count}&select=keyword,article_type,search_volume,priority,niche_id`
+    `keywords?status=eq.queued&order=priority.desc,search_volume.desc&limit=${count}&select=keyword,article_type,search_volume,priority`
   );
   return kws.map((k) => ({
     keyword: k.keyword,
@@ -112,4 +132,95 @@ async function getAffiliates() {
   return { total: affiliates.length, by_status: byStatus };
 }
 
-module.exports = { getStats, getRecentArticles, getMonthlyCost, getKeywordsQueue, getAffiliates };
+async function getPipelineHealth() {
+  const now = new Date();
+  const oneDayAgo = new Date(now - 24 * 60 * 60 * 1000).toISOString();
+
+  const [lastPublished, qaFailed, drafts, recentCost] = await Promise.all([
+    supa('articles?status=eq.published&order=published_at.desc&limit=1&select=title,published_at'),
+    supa('articles?status=eq.qa_failed&select=id,title,word_count'),
+    supa('articles?status=eq.draft&select=id'),
+    supa(`articles?status=eq.published&published_at=gte.${oneDayAgo}&select=generation_cost_usd`),
+  ]);
+
+  const lastPub = lastPublished[0];
+  const lastPubTime = lastPub?.published_at ? new Date(lastPub.published_at) : null;
+  const hoursSinceLast = lastPubTime
+    ? ((now - lastPubTime) / (1000 * 60 * 60)).toFixed(1)
+    : 'N/A';
+  const isStuck = !lastPubTime || now - lastPubTime > 8 * 60 * 60 * 1000;
+  const cost24h = recentCost.reduce((s, a) => s + parseFloat(a.generation_cost_usd || 0), 0);
+
+  return {
+    status: isStuck ? '⚠️ POSIBLEMENTE ATASCADO' : '✅ OK',
+    last_published_title: lastPub?.title || 'N/A',
+    last_published_at: lastPub?.published_at?.slice(0, 16).replace('T', ' ') + ' UTC' || 'N/A',
+    hours_since_last_pub: hoursSinceLast,
+    qa_failed_count: qaFailed.length,
+    qa_failed_articles: qaFailed.slice(0, 5).map((a) => `${a.title} (${a.word_count}w)`),
+    drafts_ready_to_publish: drafts.length,
+    cost_last_24h_usd: cost24h.toFixed(3),
+  };
+}
+
+// ── WRITE functions ───────────────────────────────────────────────────────────
+
+/**
+ * Pasa todos los artículos qa_failed de vuelta a draft para re-intentar publicarlos.
+ */
+async function requeueFailedArticles() {
+  const failed = await supa('articles?status=eq.qa_failed&select=id,title,word_count');
+  if (failed.length === 0) return { requeued: 0, message: 'No hay artículos qa_failed.' };
+
+  // PATCH sin return=representation para evitar body grande
+  const r = await fetch(`${SUPA_URL}/rest/v1/articles?status=eq.qa_failed`, {
+    method: 'PATCH',
+    headers: {
+      apikey: SUPA_KEY,
+      Authorization: `Bearer ${SUPA_KEY}`,
+      'Content-Type': 'application/json',
+      Prefer: 'return=minimal',
+    },
+    body: JSON.stringify({ status: 'draft' }),
+  });
+  if (!r.ok) throw new Error(`Supabase PATCH ${r.status}: ${await r.text()}`);
+
+  return {
+    requeued: failed.length,
+    message: `${failed.length} artículo(s) re-encolados. El próximo cron los publicará.`,
+    articles: failed.map((a) => `${a.title} (${a.word_count}w)`),
+  };
+}
+
+/**
+ * Agrega una keyword nueva a la cola de generación.
+ */
+async function addKeyword(keyword, articleType = 'comparison', searchVolume = 0, priority = 5) {
+  const result = await supaWrite('POST', 'keywords', {
+    keyword,
+    article_type: articleType,
+    search_volume: searchVolume,
+    priority,
+    status: 'queued',
+  });
+  return {
+    added: true,
+    keyword,
+    type: articleType,
+    id: Array.isArray(result) ? result[0]?.id : result?.id,
+    message: `Keyword "${keyword}" agregada a la cola con prioridad ${priority}.`,
+  };
+}
+
+module.exports = {
+  // read
+  getStats,
+  getRecentArticles,
+  getMonthlyCost,
+  getKeywordsQueue,
+  getAffiliates,
+  getPipelineHealth,
+  // write
+  requeueFailedArticles,
+  addKeyword,
+};
