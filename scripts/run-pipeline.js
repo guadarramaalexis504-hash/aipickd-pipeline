@@ -989,9 +989,10 @@ async function pingSearchEngines(url) {
 
 // --- Publishing (all unpublished drafts) ---
 async function publishAllDrafts(maxCount = 10) {
+  // Only fetch articles that haven't been pushed to WP yet
   const drafts = await supa(
     "GET",
-    `articles?status=eq.draft&order=created_at.asc&limit=${maxCount}&select=*,niche:niches(slug)`
+    `articles?status=eq.draft&wp_post_id=is.null&order=created_at.asc&limit=${maxCount}&select=*,niche:niches(slug)`
   );
   if (!drafts || drafts.length === 0) return { count: 0, skipped: 0 };
 
@@ -1114,6 +1115,22 @@ async function publishAllDrafts(maxCount = 10) {
       }
 
       const catId = nicheCatMap[article.niche?.slug];
+
+      // Guard: skip if a post with this slug already exists in WordPress
+      const existingBySlug = await wp("GET", `posts?slug=${encodeURIComponent(article.slug)}&_fields=id,link`).catch(() => []);
+      if (Array.isArray(existingBySlug) && existingBySlug.length > 0) {
+        const existing = existingBySlug[0];
+        console.log(`   ⏩ skip "${article.title.slice(0, 50)}": already in WP (id=${existing.id})`);
+        await supa("PATCH", `articles?id=eq.${article.id}`, {
+          status: "published",
+          wp_post_id: existing.id,
+          wp_url: existing.link,
+          published_at: new Date().toISOString(),
+        }).catch(() => {});
+        published.push(article);
+        continue;
+      }
+
       const wpPost = await wp("POST", "posts", {
         title: article.title,
         slug: article.slug,
