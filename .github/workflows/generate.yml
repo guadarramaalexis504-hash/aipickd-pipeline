@@ -100,6 +100,10 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: node scripts/auto-keywords.js
 
+      - name: Auto-dedup WordPress (remove duplicate posts)
+        if: success()
+        run: node scripts/dedup-wordpress.js --fix --quiet
+
       - name: Notify Discord — pipeline completed
         if: success()
         run: |
