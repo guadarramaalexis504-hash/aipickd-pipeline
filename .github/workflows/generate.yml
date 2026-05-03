@@ -116,6 +116,18 @@ jobs:
         if: success()
         run: node scripts/internal-links.js --hours 6
 
+      - name: Inject CTA buttons + reading time into new articles
+        if: success()
+        run: node scripts/cta-injector.js --hours 6 --go
+
+      - name: Trending keywords (Mondays only)
+        if: success()
+        run: node scripts/trending-keywords.js
+
+      - name: Queue stale articles for refresh
+        if: success()
+        run: node scripts/article-refresh.js
+
       - name: Notify Discord — pipeline completed
         if: success()
         run: |

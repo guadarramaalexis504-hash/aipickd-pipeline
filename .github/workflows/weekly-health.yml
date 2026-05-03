@@ -1,0 +1,72 @@
+name: Weekly Health Audit
+
+on:
+  schedule:
+    # Every Sunday at 10am UTC (4am Mexico City)
+    - cron: "0 10 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aipickd-weekly-health
+  cancel-in-progress: true
+
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund --ignore-scripts || npm install --no-audit --no-fund --ignore-scripts
+
+      - name: Reconstruct .env
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          WP_USERNAME: ${{ secrets.WP_USERNAME }}
+          WP_ADMIN_PASSWORD: ${{ secrets.WP_ADMIN_PASSWORD }}
+          DISCORD_WEBHOOK_ALERTAS: ${{ secrets.DISCORD_WEBHOOK_ALERTAS }}
+        run: |
+          umask 077
+          {
+            echo "SUPABASE_URL=\"${SUPABASE_URL}\""
+            echo "SUPABASE_SERVICE_ROLE_KEY=\"${SUPABASE_SERVICE_ROLE_KEY}\""
+            echo "OPENAI_API_KEY=\"${OPENAI_API_KEY}\""
+            echo "WP_USERNAME=\"${WP_USERNAME}\""
+            echo "WP_ADMIN_PASSWORD=\"${WP_ADMIN_PASSWORD}\""
+            echo "DISCORD_WEBHOOK_ALERTAS=\"${DISCORD_WEBHOOK_ALERTAS}\""
+          } > .env
+
+      - name: SEO audit (meta, titles, images, thin content)
+        run: node scripts/seo-audit.js --fix
+
+      - name: Content health (duplicates, stale dates, no images)
+        run: node scripts/content-health.js
+
+      - name: Broken link checker (external links)
+        run: node scripts/link-health.js
+
+      - name: Dedup WordPress posts
+        run: node scripts/dedup-wordpress.js --fix --quiet
+
+      - name: Always shred .env
+        if: always()
+        run: |
+          if [ -f .env ]; then
+            shred -u .env 2>/dev/null || rm -f .env
+          fi
