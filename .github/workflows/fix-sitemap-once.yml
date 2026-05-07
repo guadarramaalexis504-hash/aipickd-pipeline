@@ -1,22 +1,21 @@
-name: Weekly Health Audit
+name: Fix Sitemap Providers (one-time)
 
 on:
-  schedule:
-    # Every Sunday at 10am UTC (4am Mexico City)
-    - cron: "0 10 * * 0"
   workflow_dispatch:
 
+# Minimal permissions
 permissions:
   contents: read
 
 concurrency:
-  group: aipickd-weekly-health
-  cancel-in-progress: true
+  group: aipickd-fix-sitemap
+  cancel-in-progress: false
 
 jobs:
-  health:
+  fix:
+    name: Remove taxonomy/user pages from WP sitemap
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
 
     steps:
       - name: Checkout code
@@ -35,37 +34,24 @@ jobs:
 
       - name: Reconstruct .env
         env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           WP_USERNAME: ${{ secrets.WP_USERNAME }}
           WP_ADMIN_PASSWORD: ${{ secrets.WP_ADMIN_PASSWORD }}
           DISCORD_WEBHOOK_ALERTAS: ${{ secrets.DISCORD_WEBHOOK_ALERTAS }}
         run: |
           umask 077
           {
-            echo "SUPABASE_URL=\"${SUPABASE_URL}\""
-            echo "SUPABASE_SERVICE_ROLE_KEY=\"${SUPABASE_SERVICE_ROLE_KEY}\""
-            echo "OPENAI_API_KEY=\"${OPENAI_API_KEY}\""
             echo "WP_USERNAME=\"${WP_USERNAME}\""
             echo "WP_ADMIN_PASSWORD=\"${WP_ADMIN_PASSWORD}\""
             echo "DISCORD_WEBHOOK_ALERTAS=\"${DISCORD_WEBHOOK_ALERTAS}\""
           } > .env
 
-      - name: SEO audit (meta, titles, images, thin content)
-        run: node scripts/seo-audit.js --fix
-
-      - name: Content health (duplicates, stale dates, no images)
-        run: node scripts/content-health.js
-
-      - name: Broken link checker (external links)
-        run: node scripts/link-health.js
-
-      - name: Dedup WordPress posts
-        run: node scripts/dedup-wordpress.js --fix --quiet
-
       - name: Fix taxonomy/user noindex-sitemap conflict
         run: node scripts/fix-taxonomy-sitemap.js
+
+      - name: Verify sitemap after fix
+        run: |
+          echo "=== Sitemap after fix ==="
+          curl -s https://aipickd.com/wp-sitemap.xml | grep -E '<loc>|sitemap' | head -20
 
       - name: Always shred .env
         if: always()
