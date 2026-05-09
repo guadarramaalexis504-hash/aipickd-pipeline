@@ -48,7 +48,7 @@ const PLUGIN_PHP = `<?php
  * Plugin Name: AIPickd Sitemap Fix
  * Plugin URI:  https://aipickd.com
  * Description: Removes taxonomy and user providers from WordPress core sitemap to fix noindex/sitemap conflict in Google Search Console.
- * Version:     1.0.0
+ * Version:     1.1.0
  * Author:      AIPickd
  * License:     MIT
  */
@@ -66,6 +66,31 @@ add_filter( 'wp_sitemaps_add_provider', function( $provider, $name ) {
     }
     return $provider;
 }, 10, 2 );
+
+/**
+ * Purge LiteSpeed / hosting cache for sitemap URLs on activation and on each sitemap request.
+ * This ensures the updated sitemap (without taxonomy/users) is served immediately.
+ */
+register_activation_hook( __FILE__, 'aipickd_sitemap_fix_purge_cache' );
+add_action( 'init', 'aipickd_sitemap_fix_purge_cache_once' );
+
+function aipickd_sitemap_fix_purge_cache() {
+    // LiteSpeed Cache plugin action
+    do_action( 'litespeed_purge_url', home_url( '/wp-sitemap.xml' ) );
+    do_action( 'litespeed_purge_all' );
+    // W3 Total Cache
+    if ( function_exists( 'w3tc_flush_all' ) ) { w3tc_flush_all(); }
+    // WP Super Cache
+    if ( function_exists( 'wp_cache_clear_cache' ) ) { wp_cache_clear_cache(); }
+    // WP Rocket
+    if ( function_exists( 'rocket_clean_domain' ) ) { rocket_clean_domain(); }
+}
+
+function aipickd_sitemap_fix_purge_cache_once() {
+    if ( get_transient( 'aipickd_sitemap_cache_purged' ) ) return;
+    set_transient( 'aipickd_sitemap_cache_purged', 1, HOUR_IN_SECONDS );
+    aipickd_sitemap_fix_purge_cache();
+}
 `;
 
 function wpAuth() {
@@ -198,6 +223,61 @@ async function installPlugin() {
   return { status: "active", plugin: PLUGIN_FILE };
 }
 
+async function purgeLiteSpeedCache() {
+  const cookieJar = path.join(os.tmpdir(), `wp-cookies-purge-${Date.now()}.txt`);
+  const u = encodeURIComponent;
+
+  try {
+    // Login
+    execSync(
+      `curl -s -c "${cookieJar}" -b "wordpress_test_cookie=WpCookieCheck" ` +
+      `-X POST "${WP_BASE_URL}/wp-login.php" ` +
+      `-d "log=${u(env.WP_USERNAME)}&pwd=${u(env.WP_ADMIN_PASSWORD)}&wp-submit=Log+In&redirect_to=%2Fwp-admin%2F&testcookie=1" ` +
+      `-L -o /dev/null`,
+      { encoding: "utf8" }
+    );
+
+    // Get LiteSpeed admin page (contains nonce)
+    const adminPage = execSync(
+      `curl -s -b "${cookieJar}" "${WP_BASE_URL}/wp-admin/admin.php?page=litespeed-cache"`,
+      { encoding: "utf8" }
+    );
+    const nonceMatch = adminPage.match(/["']_wpnonce["']\s*:\s*["']([^"']+)["']/) ||
+                       adminPage.match(/name="_wpnonce"\s+value="([^"]+)"/);
+    const nonce = nonceMatch ? nonceMatch[1] : "";
+
+    // Method 1: LiteSpeed AJAX purge all
+    if (nonce) {
+      const ajaxResult = execSync(
+        `curl -s -b "${cookieJar}" ` +
+        `-X POST "${WP_BASE_URL}/wp-admin/admin-ajax.php" ` +
+        `-d "action=litespeed_ajax_purge_all&_wpnonce=${u(nonce)}"`,
+        { encoding: "utf8" }
+      );
+      console.log(`   LiteSpeed AJAX purge: ${ajaxResult.slice(0, 80)}`);
+    }
+
+    // Method 2: admin.php?page=litespeed-cache&do=purgeall (direct URL)
+    execSync(
+      `curl -s -b "${cookieJar}" "${WP_BASE_URL}/wp-admin/admin.php?page=litespeed-cache&do=purgeall" -L -o /dev/null`,
+      { encoding: "utf8" }
+    );
+
+    // Method 3: POST to LiteSpeed purge endpoint
+    const purgeResult = execSync(
+      `curl -s -b "${cookieJar}" -X POST "${WP_BASE_URL}/wp-admin/admin.php" ` +
+      `-d "page=litespeed-cache&do=purge&type=all" -L -o /dev/null`,
+      { encoding: "utf8" }
+    );
+
+    console.log("   ✅ LiteSpeed cache purge triggered.");
+  } catch (e) {
+    console.log(`   ⚠️  Cache purge attempt: ${e.message.slice(0, 100)}`);
+  } finally {
+    try { fs.unlinkSync(cookieJar); } catch {}
+  }
+}
+
 async function activatePlugin(_pluginSlug) {
   const cookieJar = path.join(os.tmpdir(), `wp-cookies-activate-${Date.now()}.txt`);
   const u = encodeURIComponent;
@@ -281,22 +361,32 @@ async function activatePlugin(_pluginSlug) {
 
   if (existing) {
     if (existing.status === "active") {
-      console.log(`   ✅ Plugin already active — sitemap fix is in place.`);
-      console.log(`   Plugin: ${existing.plugin} v${existing.version}`);
+      const needsUpgrade = existing.version && existing.version < "1.1.0";
+      console.log(`   Plugin: ${existing.plugin} v${existing.version} — ${needsUpgrade ? "upgrading to v1.1.0" : "already up to date"}`);
+      if (!needsUpgrade) {
+        // Still purge cache to ensure sitemap is fresh
+        console.log("   Purging LiteSpeed cache...");
+        if (!DRY_RUN) await purgeLiteSpeedCache();
+        return;
+      }
+      // Fall through to reinstall with new version
+      console.log("   Reinstalling plugin to apply cache-purge update...");
+    } else {
+      // Plugin exists but inactive — activate it
+      console.log(`   ⚠️  Plugin installed but inactive. Activating...`);
+      if (!DRY_RUN) {
+        try {
+          await activatePlugin(existing.plugin);
+          console.log("   ✅ Plugin activated successfully.");
+          console.log("   Purging LiteSpeed cache...");
+          await purgeLiteSpeedCache();
+        } catch (e) {
+          console.error(`   ❌ Activation failed: ${e.message}`);
+          process.exit(1);
+        }
+      }
       return;
     }
-    // Plugin exists but inactive — just activate it
-    console.log(`   ⚠️  Plugin installed but inactive. Activating...`);
-    if (!DRY_RUN) {
-      try {
-        await activatePlugin(existing.plugin);
-        console.log("   ✅ Plugin activated successfully.");
-      } catch (e) {
-        console.error(`   ❌ Activation failed: ${e.message}`);
-        process.exit(1);
-      }
-    }
-    return;
   }
 
   // 2) Plugin not installed
@@ -320,10 +410,14 @@ async function activatePlugin(_pluginSlug) {
     process.exit(1);
   }
 
-  // 4) Verify sitemap no longer has taxonomy/users
+  // 3b) Purge LiteSpeed cache so sitemap is served fresh
+  console.log("\n2b) Purging LiteSpeed cache...");
+  await purgeLiteSpeedCache();
+
+  // 4) Verify sitemap no longer has taxonomy/users (bypass cache with ?v= param)
   console.log("\n3) Verifying sitemap fix...");
   try {
-    const sitemapRes = await fetch(`${WP_BASE_URL}/wp-sitemap.xml`);
+    const sitemapRes = await fetch(`${WP_BASE_URL}/wp-sitemap.xml?v=${Date.now()}`);
     const sitemapXml = await sitemapRes.text();
     if (sitemapXml.includes("taxonomies") || sitemapXml.includes("post_tag") || sitemapXml.includes("users")) {
       console.log("   ⚠️  Taxonomy/user entries may still be in sitemap (cache?). Check in 1-2 min.");
