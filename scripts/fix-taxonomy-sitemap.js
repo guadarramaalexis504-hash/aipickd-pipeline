@@ -158,8 +158,9 @@ async function installPlugin() {
   // Extract activate link from the response page
   const activateMatch = uploadResult.match(/href="([^"]*action=activate-plugin[^"]+)"/);
   if (activateMatch) {
-    const activateUrl = activateMatch[1].replace(/&amp;/g, "&");
-    execSync(`curl -s -b "${cookieJar}" "${WP_BASE_URL}/${activateUrl.replace(/^\//, "')}" -L -o /dev/null`,
+    const rawUrl    = activateMatch[1].replace(/&amp;/g, "&");
+    const cleanUrl  = rawUrl.replace(/^\//, "");
+    execSync(`curl -s -b "${cookieJar}" "${WP_BASE_URL}/${cleanUrl}" -L -o /dev/null`,
       { encoding: "utf8" });
   } else {
     // Fallback: activate via REST API
