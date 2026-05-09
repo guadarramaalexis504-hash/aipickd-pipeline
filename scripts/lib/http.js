@@ -30,6 +30,25 @@ function parseRetryAfter(header) {
   return null;
 }
 
+/**
+ * @typedef {object} RetryOptions
+ * @property {number} [retries=3]    Max retry attempts after the first try.
+ * @property {number} [baseDelay=1000]  Base delay in ms (doubled per attempt).
+ * @property {number} [maxDelay=15000]  Cap for any single backoff sleep.
+ * @property {number} [timeout=30000]   Per-attempt timeout in ms.
+ * @property {number[]} [retryOn]       HTTP statuses that trigger a retry.
+ */
+
+/**
+ * Drop-in `fetch` replacement with exponential backoff + jittered retries
+ * on transient failures (network errors, 5xx, 429). Honors `Retry-After`
+ * on 429. Aborts each attempt after `timeout`.
+ *
+ * @param {string | URL} url
+ * @param {RequestInit} [options]
+ * @param {RetryOptions} [opts]
+ * @returns {Promise<Response>}
+ */
 async function fetchWithRetry(url, options = {}, opts = {}) {
   const cfg = { ...DEFAULTS, ...opts };
   let lastErr = null;

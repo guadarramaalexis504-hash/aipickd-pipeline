@@ -1,0 +1,62 @@
+workflows:
+  - changed-files:
+      - any-glob-to-any-file:
+          - .github/workflows/**
+          - .github/actions/**
+
+scripts:
+  - changed-files:
+      - any-glob-to-any-file:
+          - scripts/**
+
+pipeline-core:
+  - changed-files:
+      - any-glob-to-any-file:
+          - scripts/run-pipeline.js
+          - scripts/generate-long-article.js
+          - scripts/lib/**
+
+supabase:
+  - changed-files:
+      - any-glob-to-any-file:
+          - supabase/**
+
+tests:
+  - changed-files:
+      - any-glob-to-any-file:
+          - tests/**
+
+documentation:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "**/*.md"
+          - docs/**
+
+dependencies:
+  - changed-files:
+      - any-glob-to-any-file:
+          - package.json
+          - package-lock.json
+
+ci:
+  - changed-files:
+      - any-glob-to-any-file:
+          - .github/workflows/ci.yml
+          - .github/workflows/security-scan.yml
+          - .github/workflows/migration-check.yml
+          - .eslintrc.json
+          - .prettierrc.json
+          - .prettierignore
+
+config:
+  - changed-files:
+      - any-glob-to-any-file:
+          - .gitignore
+          - .pre-commit-config.yaml
+          - .editorconfig
+
+content:
+  - changed-files:
+      - any-glob-to-any-file:
+          - content-bank/**
+          - content-engine/**

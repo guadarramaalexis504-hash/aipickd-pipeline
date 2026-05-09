@@ -1,0 +1,21 @@
+name: Release Please
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          release-type: node
+          # Conventional Commits parsed from PR titles + commit messages.
+          # Bumps package.json version, generates CHANGELOG.md, opens a
+          # release PR. Merging that PR creates a git tag + GH release.
