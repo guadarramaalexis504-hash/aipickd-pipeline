@@ -169,13 +169,74 @@ async function installPlugin() {
     { encoding: "utf8" }
   );
 
+  let finalUploadResult = uploadResult;
+
+  // ── 4b. Handle "replace existing plugin?" prompt ────────────────────────────
+  // WordPress shows this when a plugin with the same slug already exists
+  const isReplacePrompt =
+    uploadResult.includes("overwrite=update-plugin") ||
+    uploadResult.includes("Replace current with uploaded") ||
+    uploadResult.includes("overwrite-plugin");
+
+  if (isReplacePrompt) {
+    console.log("   Detected 'replace existing plugin?' prompt — confirming replacement...");
+    // Extract the form action URL with tmp_filename, destination etc.
+    const replaceMatch =
+      uploadResult.match(/action="([^"]*overwrite=update-plugin[^"]*)"/) ||
+      uploadResult.match(/href="([^"]*overwrite=update-plugin[^"]*)"/) ||
+      uploadResult.match(/action="(update\.php[^"]*overwrite[^"]*)"/) ||
+      uploadResult.match(/action="(\/wp-admin\/update\.php[^"]*)"/);
+
+    // Also look for the nonce on this page
+    const replaceNonceMatch = uploadResult.match(/name="_wpnonce"\s+value="([^"]+)"/) ||
+                              uploadResult.match(/name="overwrite_nonce"\s+value="([^"]+)"/);
+    const replaceNonce = replaceNonceMatch ? replaceNonceMatch[1] : nonce;
+
+    if (replaceMatch) {
+      const rawAction = replaceMatch[1].replace(/&amp;/g, "&");
+      const actionUrl = rawAction.startsWith("http") ? rawAction
+                        : rawAction.startsWith("/")   ? `${WP_BASE_URL}${rawAction}`
+                        : `${WP_BASE_URL}/wp-admin/${rawAction}`;
+      console.log(`   Replace URL: ${actionUrl.slice(0, 100)}`);
+      finalUploadResult = execSync(
+        `curl -s -b "${cookieJar}" -X POST "${actionUrl}" ` +
+        `-d "_wpnonce=${replaceNonce}&overwrite=update-plugin" -L`,
+        { encoding: "utf8" }
+      );
+    } else {
+      // Fallback: extract all query params from the form and POST
+      const tmpMatch    = uploadResult.match(/name="tmp_filename"\s+value="([^"]+)"/);
+      const destMatch   = uploadResult.match(/name="destination"\s+value="([^"]+)"/);
+      const abspathMatch = uploadResult.match(/name="abort_path"\s+value="([^"]+)"/);
+
+      if (tmpMatch && destMatch) {
+        const params = [
+          `_wpnonce=${encodeURIComponent(replaceNonce)}`,
+          `tmp_filename=${encodeURIComponent(tmpMatch[1])}`,
+          `destination=${encodeURIComponent(destMatch[1])}`,
+          `overwrite=update-plugin`,
+          abspathMatch ? `abort_path=${encodeURIComponent(abspathMatch[1])}` : "",
+        ].filter(Boolean).join("&");
+        finalUploadResult = execSync(
+          `curl -s -b "${cookieJar}" -X POST "${WP_BASE_URL}/wp-admin/update.php?action=upload-plugin&overwrite=update-plugin" ` +
+          `-d "${params}" -L`,
+          { encoding: "utf8" }
+        );
+      } else {
+        throw new Error("Could not extract replacement form params from WP plugin-replace page");
+      }
+    }
+  }
+
   const installed =
-    uploadResult.includes("Plugin installed successfully") ||
-    uploadResult.includes("activate-plugin") ||
-    uploadResult.includes("Installed Successfully");
+    finalUploadResult.includes("Plugin installed successfully") ||
+    finalUploadResult.includes("activate-plugin") ||
+    finalUploadResult.includes("Installed Successfully") ||
+    finalUploadResult.includes("Updated Successfully") ||
+    finalUploadResult.includes("Plugin updated successfully");
 
   if (!installed) {
-    const snippet = uploadResult.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").slice(0, 400);
+    const snippet = finalUploadResult.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").slice(0, 400);
     throw new Error(`Admin plugin upload failed. Response: ${snippet}`);
   }
 
@@ -183,9 +244,9 @@ async function installPlugin() {
   // Extract activate link from the response page
   // WP admin shows "Activate Plugin" link — try several regex patterns
   const activateMatch =
-    uploadResult.match(/href="([^"]*[?&]action=activate[^"]+plugin[^"]+)"/) ||
-    uploadResult.match(/href="([^"]*plugins\.php\?action=activate[^"]+)"/) ||
-    uploadResult.match(/href="([^"]*action=activate[^"]+)"/);
+    finalUploadResult.match(/href="([^"]*[?&]action=activate[^"]+plugin[^"]+)"/) ||
+    finalUploadResult.match(/href="([^"]*plugins\.php\?action=activate[^"]+)"/) ||
+    finalUploadResult.match(/href="([^"]*action=activate[^"]+)"/);
 
   if (activateMatch) {
     const rawUrl   = activateMatch[1].replace(/&amp;/g, "&");
