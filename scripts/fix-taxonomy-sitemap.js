@@ -231,10 +231,35 @@ async function activatePlugin(_pluginSlug) {
       throw new Error("Could not find activate link in WP admin plugins page (login failed or plugin not installed)");
     }
 
-    const rawUrl  = activateMatch[1].replace(/&amp;/g, "&");
-    const fullUrl = rawUrl.startsWith("http") ? rawUrl : `${WP_BASE_URL}/${rawUrl.replace(/^\//, "")}`;
-    console.log(`   Activating via admin: ${fullUrl.slice(0, 80)}...`);
+    const rawUrl = activateMatch[1].replace(/&amp;/g, "&");
+    // Build absolute URL — WP admin links can be:
+    //   absolute:        https://aipickd.com/wp-admin/plugins.php?...
+    //   root-relative:   /wp-admin/plugins.php?...
+    //   page-relative:   plugins.php?...   (relative to wp-admin/)
+    let fullUrl;
+    if (rawUrl.startsWith("http")) {
+      fullUrl = rawUrl;
+    } else if (rawUrl.startsWith("/wp-admin/")) {
+      fullUrl = `${WP_BASE_URL}${rawUrl}`;
+    } else {
+      fullUrl = `${WP_BASE_URL}/wp-admin/${rawUrl.replace(/^\//, "")}`;
+    }
+    console.log(`   Activating via admin: ${fullUrl.slice(0, 100)}...`);
     execSync(`curl -s -b "${cookieJar}" "${fullUrl}" -L -o /dev/null`, { encoding: "utf8" });
+
+    // Verify: check plugin status via REST to confirm activation worked
+    const verifyRes = await fetch(`${WP_BASE_URL}/wp-json/wp/v2/plugins?search=${PLUGIN_SLUG}&per_page=5`, {
+      headers: { Authorization: wpAuth() },
+    });
+    if (verifyRes.ok) {
+      const list = await verifyRes.json();
+      const p = list.find((x) => x.plugin && x.plugin.includes(PLUGIN_SLUG));
+      if (p && p.status === "active") {
+        console.log("   ✅ Verified active via REST API.");
+      } else {
+        console.log(`   ⚠️  REST API shows status=${p ? p.status : "not found"} after activation attempt.`);
+      }
+    }
   } finally {
     try { fs.unlinkSync(cookieJar); } catch {}
   }
