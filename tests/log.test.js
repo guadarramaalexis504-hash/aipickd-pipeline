@@ -60,9 +60,7 @@ test("log: respects LOG_LEVEL=warn (drops info/debug)", () => {
 });
 
 test("log: child() merges base fields", () => {
-  const r = runLog(
-    'const c = log.child({ articleId: 42 }); c.info("done", { words: 100 });'
-  );
+  const r = runLog('const c = log.child({ articleId: 42 }); c.info("done", { words: 100 });');
   const out = JSON.parse(r.stdout.trim());
   assert.equal(out.script, "test");
   assert.equal(out.articleId, 42);
