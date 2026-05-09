@@ -95,52 +95,85 @@ async function checkPluginStatus() {
 }
 
 async function installPlugin() {
-  const tmpDir = path.join(os.tmpdir(), PLUGIN_SLUG);
+  const tmpDir  = path.join(os.tmpdir(), PLUGIN_SLUG);
   const zipPath = path.join(os.tmpdir(), `${PLUGIN_SLUG}.zip`);
+  const cookieJar = path.join(os.tmpdir(), `wp-cookies-${Date.now()}.txt`);
 
-  // Write plugin PHP file
+  // ── 1. Write plugin PHP + create ZIP ────────────────────────────────────────
   fs.mkdirSync(tmpDir, { recursive: true });
   fs.writeFileSync(path.join(tmpDir, `${PLUGIN_SLUG}.php`), PLUGIN_PHP, "utf8");
-
-  // Create ZIP (requires `zip` CLI — available on Ubuntu/macOS)
   try {
     execSync(`cd "${os.tmpdir()}" && zip -r "${zipPath}" "${PLUGIN_SLUG}/"`, { stdio: "pipe" });
   } catch (e) {
     throw new Error(`Failed to create ZIP: ${e.message}`);
   }
 
-  // Use curl for the upload — Node.js fetch/FormData doesn't send multipart correctly
-  // with the WP REST API (WP needs proper multipart boundaries for file detection).
-  const authB64 = Buffer.from(`${env.WP_USERNAME}:${env.WP_ADMIN_PASSWORD}`).toString("base64");
+  const u = encodeURIComponent;
 
-  let result;
-  try {
-    result = execSync(
-      `curl -s -X POST "${WP_BASE_URL}/wp-json/wp/v2/plugins"` +
-      ` -H "Authorization: Basic ${authB64}"` +
-      ` -F "pluginzip=@${zipPath};type=application/zip"` +
-      ` -F "status=active"`,
-      { encoding: "utf8" }
-    );
-  } catch (e) {
-    throw new Error(`curl upload failed: ${e.message}`);
+  // ── 2. Admin login → get session cookies ───────────────────────────────────
+  execSync(
+    `curl -s -c "${cookieJar}" -b "wordpress_test_cookie=WpCookieCheck" ` +
+    `-X POST "${WP_BASE_URL}/wp-login.php" ` +
+    `-d "log=${u(env.WP_USERNAME)}&pwd=${u(env.WP_ADMIN_PASSWORD)}&wp-submit=Log+In&redirect_to=%2Fwp-admin%2F&testcookie=1" ` +
+    `-L -o /dev/null`,
+    { encoding: "utf8" }
+  );
+
+  // ── 3. Fetch plugin-install page to extract _wpnonce ────────────────────────
+  const installPage = execSync(
+    `curl -s -b "${cookieJar}" "${WP_BASE_URL}/wp-admin/plugin-install.php?tab=upload"`,
+    { encoding: "utf8" }
+  );
+  const nonceMatch =
+    installPage.match(/name="_wpnonce"\s+value="([^"]+)"/) ||
+    installPage.match(/"nonce"\s*:\s*"([^"]+)"/) ||
+    installPage.match(/_wpnonce['"]\s*(?:value)?['"]\s*:\s*['"]([^'"]+)['"]/);
+  if (!nonceMatch) {
+    throw new Error("Could not extract _wpnonce from WP admin plugin-install page (login failed?)");
+  }
+  const nonce = nonceMatch[1];
+
+  // ── 4. Upload zip via admin form ────────────────────────────────────────────
+  const uploadResult = execSync(
+    `curl -s -b "${cookieJar}" ` +
+    `-X POST "${WP_BASE_URL}/wp-admin/update.php?action=upload-plugin" ` +
+    `-F "pluginzip=@${zipPath};type=application/zip" ` +
+    `-F "_wpnonce=${nonce}" ` +
+    `-F "_wp_http_referer=%2Fwp-admin%2Fplugin-install.php" ` +
+    `-F "install-plugin-submit=Install+Now" -L`,
+    { encoding: "utf8" }
+  );
+
+  const installed =
+    uploadResult.includes("Plugin installed successfully") ||
+    uploadResult.includes("activate-plugin") ||
+    uploadResult.includes("Installed Successfully");
+
+  if (!installed) {
+    const snippet = uploadResult.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").slice(0, 400);
+    throw new Error(`Admin plugin upload failed. Response: ${snippet}`);
   }
 
-  let body;
-  try { body = JSON.parse(result); }
-  catch { throw new Error(`Plugin install: unexpected response: ${result.slice(0, 300)}`); }
+  // ── 5. Activate the plugin ──────────────────────────────────────────────────
+  // Extract activate link from the response page
+  const activateMatch = uploadResult.match(/href="([^"]*action=activate-plugin[^"]+)"/);
+  if (activateMatch) {
+    const activateUrl = activateMatch[1].replace(/&amp;/g, "&");
+    execSync(`curl -s -b "${cookieJar}" "${WP_BASE_URL}/${activateUrl.replace(/^\//, "')}" -L -o /dev/null`,
+      { encoding: "utf8" });
+  } else {
+    // Fallback: activate via REST API
+    await activatePlugin(PLUGIN_FILE);
+  }
 
-  // Cleanup temp files
+  // Cleanup
   try {
     fs.rmSync(tmpDir, { recursive: true, force: true });
     fs.unlinkSync(zipPath);
+    fs.unlinkSync(cookieJar);
   } catch {}
 
-  if (body.code && body.code.startsWith("rest_")) {
-    throw new Error(`Plugin install failed: ${result.slice(0, 300)}`);
-  }
-
-  return body;
+  return { status: "active", plugin: PLUGIN_FILE };
 }
 
 async function activatePlugin(pluginSlug) {
