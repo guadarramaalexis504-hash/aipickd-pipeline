@@ -61,7 +61,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
+      contents: read
       security-events: write
+      actions: read
     steps:
       - uses: actions/checkout@v4
       - uses: github/codeql-action/init@v3
@@ -69,6 +71,8 @@ jobs:
           languages: javascript
           queries: security-and-quality
       - uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:javascript"
 
   workflow-permissions-audit:
     name: Verify Workflow Permissions
