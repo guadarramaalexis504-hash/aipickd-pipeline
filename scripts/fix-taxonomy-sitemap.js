@@ -109,33 +109,36 @@ async function installPlugin() {
     throw new Error(`Failed to create ZIP: ${e.message}`);
   }
 
-  const zipData = fs.readFileSync(zipPath);
-  const FormDataClass = globalThis.FormData || (await import("node:form-data")).default;
-  const formData = new FormDataClass();
+  // Use curl for the upload — Node.js fetch/FormData doesn't send multipart correctly
+  // with the WP REST API (WP needs proper multipart boundaries for file detection).
+  const authB64 = Buffer.from(`${env.WP_USERNAME}:${env.WP_ADMIN_PASSWORD}`).toString("base64");
 
-  // Depending on Node version, Blob may or may not be available
-  const BlobClass = globalThis.Blob;
-  formData.append("pluginzip", new BlobClass([zipData], { type: "application/zip" }), `${PLUGIN_SLUG}.zip`);
-  formData.append("status", "active");
-
-  const res = await fetch(`${WP_BASE_URL}/wp-json/wp/v2/plugins`, {
-    method: "POST",
-    headers: { Authorization: wpAuth() },
-    body: formData,
-  });
-
-  const text = await res.text();
-  const body = text ? JSON.parse(text) : null;
-
-  if (!res.ok) {
-    throw new Error(`Plugin install failed (${res.status}): ${text.slice(0, 300)}`);
+  let result;
+  try {
+    result = execSync(
+      `curl -s -X POST "${WP_BASE_URL}/wp-json/wp/v2/plugins"` +
+      ` -H "Authorization: Basic ${authB64}"` +
+      ` -F "pluginzip=@${zipPath};type=application/zip"` +
+      ` -F "status=active"`,
+      { encoding: "utf8" }
+    );
+  } catch (e) {
+    throw new Error(`curl upload failed: ${e.message}`);
   }
+
+  let body;
+  try { body = JSON.parse(result); }
+  catch { throw new Error(`Plugin install: unexpected response: ${result.slice(0, 300)}`); }
 
   // Cleanup temp files
   try {
     fs.rmSync(tmpDir, { recursive: true, force: true });
     fs.unlinkSync(zipPath);
   } catch {}
+
+  if (body.code && body.code.startsWith("rest_")) {
+    throw new Error(`Plugin install failed: ${result.slice(0, 300)}`);
+  }
 
   return body;
 }
