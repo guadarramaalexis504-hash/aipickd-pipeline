@@ -156,15 +156,36 @@ async function installPlugin() {
 
   // ── 5. Activate the plugin ──────────────────────────────────────────────────
   // Extract activate link from the response page
-  const activateMatch = uploadResult.match(/href="([^"]*action=activate-plugin[^"]+)"/);
+  // WP admin shows "Activate Plugin" link — try several regex patterns
+  const activateMatch =
+    uploadResult.match(/href="([^"]*[?&]action=activate[^"]+plugin[^"]+)"/) ||
+    uploadResult.match(/href="([^"]*plugins\.php\?action=activate[^"]+)"/) ||
+    uploadResult.match(/href="([^"]*action=activate[^"]+)"/);
+
   if (activateMatch) {
-    const rawUrl    = activateMatch[1].replace(/&amp;/g, "&");
-    const cleanUrl  = rawUrl.replace(/^\//, "");
-    execSync(`curl -s -b "${cookieJar}" "${WP_BASE_URL}/${cleanUrl}" -L -o /dev/null`,
-      { encoding: "utf8" });
+    const rawUrl   = activateMatch[1].replace(/&amp;/g, "&");
+    const cleanUrl = rawUrl.startsWith("http") ? rawUrl : `${WP_BASE_URL}/${rawUrl.replace(/^\//, "")}`;
+    console.log(`   Activating via: ${cleanUrl.slice(0, 80)}...`);
+    execSync(`curl -s -b "${cookieJar}" "${cleanUrl}" -L -o /dev/null`, { encoding: "utf8" });
   } else {
-    // Fallback: activate via REST API
-    await activatePlugin(PLUGIN_FILE);
+    // Fallback: activate via admin plugins page
+    console.log("   No activate link found in response — trying admin plugins page...");
+    const pluginsPage = execSync(
+      `curl -s -b "${cookieJar}" "${WP_BASE_URL}/wp-admin/plugins.php"`,
+      { encoding: "utf8" }
+    );
+    // Find activate link for our plugin
+    const adminActivateMatch = pluginsPage.match(
+      new RegExp(`href="([^"]*action=activate[^"]*${PLUGIN_SLUG}[^"]*)"`)
+    );
+    if (adminActivateMatch) {
+      const url = adminActivateMatch[1].replace(/&amp;/g, "&");
+      const fullUrl = url.startsWith("http") ? url : `${WP_BASE_URL}/${url.replace(/^\//, "")}`;
+      execSync(`curl -s -b "${cookieJar}" "${fullUrl}" -L -o /dev/null`, { encoding: "utf8" });
+      console.log("   Activated via plugins page.");
+    } else {
+      console.log("   ⚠️  Could not auto-activate. Plugin is installed — activate manually in WP admin.");
+    }
   }
 
   // Cleanup
