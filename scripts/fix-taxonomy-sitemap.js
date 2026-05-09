@@ -198,15 +198,46 @@ async function installPlugin() {
   return { status: "active", plugin: PLUGIN_FILE };
 }
 
-async function activatePlugin(pluginSlug) {
-  const res = await fetch(`${WP_BASE_URL}/wp-json/wp/v2/plugins/${encodeURIComponent(pluginSlug)}`, {
-    method: "POST",
-    headers: { Authorization: wpAuth(), "Content-Type": "application/json" },
-    body: JSON.stringify({ status: "active" }),
-  });
-  const text = await res.text();
-  if (!res.ok) throw new Error(`Activate failed (${res.status}): ${text.slice(0, 200)}`);
-  return text ? JSON.parse(text) : null;
+async function activatePlugin(_pluginSlug) {
+  const cookieJar = path.join(os.tmpdir(), `wp-cookies-activate-${Date.now()}.txt`);
+  const u = encodeURIComponent;
+
+  try {
+    // ── 1. Admin login → get session cookies ──────────────────────────────
+    execSync(
+      `curl -s -c "${cookieJar}" -b "wordpress_test_cookie=WpCookieCheck" ` +
+      `-X POST "${WP_BASE_URL}/wp-login.php" ` +
+      `-d "log=${u(env.WP_USERNAME)}&pwd=${u(env.WP_ADMIN_PASSWORD)}&wp-submit=Log+In&redirect_to=%2Fwp-admin%2F&testcookie=1" ` +
+      `-L -o /dev/null`,
+      { encoding: "utf8" }
+    );
+
+    // ── 2. Get plugins page and find activate link ─────────────────────────
+    const pluginsPage = execSync(
+      `curl -s -b "${cookieJar}" "${WP_BASE_URL}/wp-admin/plugins.php"`,
+      { encoding: "utf8" }
+    );
+
+    // Check if already active (deactivate link present means it's active)
+    if (pluginsPage.match(new RegExp(`action=deactivate[^"]*${PLUGIN_SLUG}`))) {
+      console.log("   Plugin is already active.");
+      return;
+    }
+
+    const activateMatch = pluginsPage.match(
+      new RegExp(`href="([^"]*action=activate[^"]*${PLUGIN_SLUG}[^"]*)"`)
+    );
+    if (!activateMatch) {
+      throw new Error("Could not find activate link in WP admin plugins page (login failed or plugin not installed)");
+    }
+
+    const rawUrl  = activateMatch[1].replace(/&amp;/g, "&");
+    const fullUrl = rawUrl.startsWith("http") ? rawUrl : `${WP_BASE_URL}/${rawUrl.replace(/^\//, "")}`;
+    console.log(`   Activating via admin: ${fullUrl.slice(0, 80)}...`);
+    execSync(`curl -s -b "${cookieJar}" "${fullUrl}" -L -o /dev/null`, { encoding: "utf8" });
+  } finally {
+    try { fs.unlinkSync(cookieJar); } catch {}
+  }
 }
 
 (async () => {
