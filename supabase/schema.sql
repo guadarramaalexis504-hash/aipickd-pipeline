@@ -221,7 +221,7 @@ INSERT INTO system_config (key, value, description) VALUES
     ('min_word_count', '2000', 'Mínimo de palabras por artículo'),
     ('max_word_count', '3500', 'Máximo de palabras por artículo'),
     ('ai_bridge_enabled', 'true', 'Usar Claude + GPT pipeline vs solo uno'),
-    ('auto_publish', 'false', 'Publicar automáticamente o marcar como draft pa' review'),
+    ('auto_publish', 'false', 'Publicar automáticamente o marcar como draft para review'),
     ('review_cadence_days', '90', 'Cada cuántos días revisar y refrescar artículo');
 
 -- ============================================

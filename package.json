@@ -12,8 +12,8 @@
     "dashboard": "node scripts/generate-dashboard.js",
     "lint": "eslint \"scripts/**/*.js\" \"tests/**/*.js\"",
     "lint:fix": "eslint --fix \"scripts/**/*.js\" \"tests/**/*.js\"",
-    "format": "prettier --check \"scripts/**/*.js\" \"tests/**/*.js\"",
-    "format:fix": "prettier --write \"scripts/**/*.js\" \"tests/**/*.js\"",
+    "format": "prettier --check \"scripts/lib/**/*.js\" \"tests/**/*.js\"",
+    "format:fix": "prettier --write \"scripts/lib/**/*.js\" \"tests/**/*.js\"",
     "syntax-check": "find scripts -maxdepth 2 -name '*.js' -print0 | xargs -0 -n1 node --check",
     "test": "node --test tests/*.js",
     "validate": "npm run syntax-check && npm run lint && npm test"

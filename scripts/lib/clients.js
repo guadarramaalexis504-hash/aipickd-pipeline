@@ -49,9 +49,7 @@ async function wp(method, endpoint, body, opts = {}) {
   if (!env.WP_USERNAME || !env.WP_ADMIN_PASSWORD) {
     throw new Error("wp(): WP_USERNAME or WP_ADMIN_PASSWORD missing");
   }
-  const auth = Buffer.from(
-    `${env.WP_USERNAME}:${env.WP_ADMIN_PASSWORD}`
-  ).toString("base64");
+  const auth = Buffer.from(`${env.WP_USERNAME}:${env.WP_ADMIN_PASSWORD}`).toString("base64");
 
   const res = await fetchWithRetry(
     `${WP_HOST}/wp-json/wp/v2/${endpoint}`,

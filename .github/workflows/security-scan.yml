@@ -28,9 +28,11 @@ jobs:
       - name: Scan for hardcoded credentials
         run: |
           echo "Scanning for common credential patterns..."
-          ! git ls-files | xargs grep -lE "sk-proj-[a-zA-Z0-9_-]{20,}|sk-ant-[a-zA-Z0-9_-]{20,}|eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|ghp_[a-zA-Z0-9]{36}" 2>/dev/null \
-            && echo "✅ No hardcoded credentials found" \
-            || (echo "❌ FOUND HARDCODED SECRETS — review immediately" && exit 1)
+          if git ls-files | xargs grep -lE "sk-proj-[a-zA-Z0-9_-]{20,}|sk-ant-[a-zA-Z0-9_-]{20,}|eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|ghp_[a-zA-Z0-9]{36}" 2>/dev/null; then
+            echo "❌ FOUND HARDCODED SECRETS — review immediately"
+            exit 1
+          fi
+          echo "✅ No hardcoded credentials found"
 
       - name: Verify .env never committed
         run: |

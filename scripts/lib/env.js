@@ -57,9 +57,7 @@ function parseEnvFile(content) {
 function loadEnv({ envPath = DEFAULT_ENV_PATH, refresh = false } = {}) {
   if (cache && !refresh) return cache;
 
-  const fileEnv = fs.existsSync(envPath)
-    ? parseEnvFile(fs.readFileSync(envPath, "utf8"))
-    : {};
+  const fileEnv = fs.existsSync(envPath) ? parseEnvFile(fs.readFileSync(envPath, "utf8")) : {};
 
   cache = new Proxy(
     {},
@@ -72,15 +70,10 @@ function loadEnv({ envPath = DEFAULT_ENV_PATH, refresh = false } = {}) {
         return fileEnv[key];
       },
       has(_t, key) {
-        return (
-          (typeof key === "string" && process.env[key] !== undefined) ||
-          key in fileEnv
-        );
+        return (typeof key === "string" && process.env[key] !== undefined) || key in fileEnv;
       },
       ownKeys() {
-        return Array.from(
-          new Set([...Object.keys(process.env), ...Object.keys(fileEnv)])
-        );
+        return Array.from(new Set([...Object.keys(process.env), ...Object.keys(fileEnv)]));
       },
       getOwnPropertyDescriptor() {
         return { enumerable: true, configurable: true };
@@ -99,9 +92,7 @@ function require_(keys) {
     if (!v) missing.push(k);
   }
   if (missing.length > 0) {
-    const err = new Error(
-      `Missing required env var(s): ${missing.join(", ")}`
-    );
+    const err = new Error(`Missing required env var(s): ${missing.join(", ")}`);
     err.code = "ENV_MISSING";
     err.missing = missing;
     throw err;

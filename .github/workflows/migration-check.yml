@@ -52,18 +52,18 @@ jobs:
         run: |
           set -e
           prev=""
-          for f in $(ls supabase/migrations/*.sql | sort); do
+          while IFS= read -r f; do
             ts="$(basename "$f" | cut -c1-14)"
             if [ -n "$prev" ] && [ "$ts" \< "$prev" ]; then
               echo "❌ Migration $f has timestamp $ts older than previous $prev"
               exit 1
             fi
             prev="$ts"
-          done
+          done < <(find supabase/migrations -maxdepth 1 -name '*.sql' | sort)
 
       - name: Wait for Postgres
         run: |
-          for i in {1..30}; do
+          for _ in $(seq 1 30); do
             if PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d aipickd_test -c '\q' 2>/dev/null; then
               break
             fi
@@ -75,9 +75,9 @@ jobs:
           PGPASSWORD: postgres
         run: |
           set -e
-          for f in $(ls supabase/migrations/*.sql | sort); do
+          while IFS= read -r f; do
             echo "▶ Applying $f"
             # Single transaction so partial failure rolls back cleanly.
             psql -h 127.0.0.1 -U postgres -d aipickd_test -v ON_ERROR_STOP=1 --single-transaction -f "$f"
-          done
+          done < <(find supabase/migrations -maxdepth 1 -name '*.sql' | sort)
           echo "✅ All migrations applied successfully."

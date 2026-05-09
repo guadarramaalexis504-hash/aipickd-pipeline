@@ -55,7 +55,12 @@ async function fetchWithRetry(url, options = {}, opts = {}) {
     } catch (err) {
       lastErr = err;
       const isAbort = err.name === "AbortError";
-      const isNetwork = err.name === "TypeError" || err.code === "ECONNRESET" || err.code === "ECONNREFUSED" || err.code === "ETIMEDOUT" || err.code === "EAI_AGAIN";
+      const isNetwork =
+        err.name === "TypeError" ||
+        err.code === "ECONNRESET" ||
+        err.code === "ECONNREFUSED" ||
+        err.code === "ETIMEDOUT" ||
+        err.code === "EAI_AGAIN";
 
       if (attempt >= cfg.retries || (!isAbort && !isNetwork)) {
         throw err;

@@ -7,11 +7,7 @@ const path = require("node:path");
 const { parseEnvFile, loadEnv, require: requireEnv } = require("../scripts/lib/env");
 
 test("parseEnvFile: handles unquoted, double-quoted, single-quoted", () => {
-  const out = parseEnvFile([
-    "FOO=bar",
-    'BAZ="hello world"',
-    "QUX='single quoted'",
-  ].join("\n"));
+  const out = parseEnvFile(["FOO=bar", 'BAZ="hello world"', "QUX='single quoted'"].join("\n"));
   assert.equal(out.FOO, "bar");
   assert.equal(out.BAZ, "hello world");
   assert.equal(out.QUX, "single quoted");
@@ -28,13 +24,9 @@ test("parseEnvFile: handles values containing equal signs", () => {
 });
 
 test("parseEnvFile: skips comments and blank lines", () => {
-  const out = parseEnvFile([
-    "# comment",
-    "",
-    "FOO=bar",
-    "  # indented comment",
-    "BAZ=qux",
-  ].join("\n"));
+  const out = parseEnvFile(
+    ["# comment", "", "FOO=bar", "  # indented comment", "BAZ=qux"].join("\n")
+  );
   assert.deepEqual(out, { FOO: "bar", BAZ: "qux" });
 });
 
