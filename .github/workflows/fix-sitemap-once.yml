@@ -3,7 +3,6 @@ name: Fix Sitemap Providers (one-time)
 on:
   workflow_dispatch:
 
-# Minimal permissions
 permissions:
   contents: read
 
@@ -23,27 +22,16 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Setup Node.js 20
-        uses: actions/setup-node@v4
+      - name: Setup AIPickd environment
+        uses: ./.github/actions/setup-env
         with:
-          node-version: "20"
-          cache: "npm"
-
-      - name: Install dependencies
-        run: npm ci --no-audit --no-fund --ignore-scripts || npm install --no-audit --no-fund --ignore-scripts
-
-      - name: Reconstruct .env
-        env:
-          WP_USERNAME: ${{ secrets.WP_USERNAME }}
-          WP_ADMIN_PASSWORD: ${{ secrets.WP_ADMIN_PASSWORD }}
-          DISCORD_WEBHOOK_ALERTAS: ${{ secrets.DISCORD_WEBHOOK_ALERTAS }}
-        run: |
-          umask 077
-          {
-            echo "WP_USERNAME=\"${WP_USERNAME}\""
-            echo "WP_ADMIN_PASSWORD=\"${WP_ADMIN_PASSWORD}\""
-            echo "DISCORD_WEBHOOK_ALERTAS=\"${DISCORD_WEBHOOK_ALERTAS}\""
-          } > .env
+          # Supabase not used by this script but the composite action requires the
+          # creds to be present. Pass real values so config validation passes.
+          supabase-url: ${{ secrets.SUPABASE_URL }}
+          supabase-service-role-key: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          wp-username: ${{ secrets.WP_USERNAME }}
+          wp-admin-password: ${{ secrets.WP_ADMIN_PASSWORD }}
+          discord-webhook-alertas: ${{ secrets.DISCORD_WEBHOOK_ALERTAS }}
 
       - name: Fix taxonomy/user noindex-sitemap conflict
         run: node scripts/fix-taxonomy-sitemap.js
@@ -52,10 +40,3 @@ jobs:
         run: |
           echo "=== Sitemap after fix ==="
           curl -s https://aipickd.com/wp-sitemap.xml | grep -E '<loc>|sitemap' | head -20
-
-      - name: Always shred .env
-        if: always()
-        run: |
-          if [ -f .env ]; then
-            shred -u .env 2>/dev/null || rm -f .env
-          fi

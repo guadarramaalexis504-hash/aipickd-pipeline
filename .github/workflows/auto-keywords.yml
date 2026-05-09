@@ -14,9 +14,11 @@ on:
 permissions:
   contents: read
 
+# Mutates Supabase keywords table — share concurrency with generate.yml
+# to avoid races on the keyword queue.
 concurrency:
-  group: aipickd-auto-keywords
-  cancel-in-progress: true
+  group: aipickd-mutations
+  cancel-in-progress: false
 
 jobs:
   refill:
@@ -28,32 +30,16 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - name: Setup AIPickd environment
+        uses: ./.github/actions/setup-env
         with:
-          node-version: "20"
-
-      - name: Reconstruct .env
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          DISCORD_WEBHOOK_ALERTAS: ${{ secrets.DISCORD_WEBHOOK_ALERTAS }}
-          DISCORD_WEBHOOK_PIPELINE: ${{ secrets.DISCORD_WEBHOOK_PIPELINE }}
-        run: |
-          umask 077
-          {
-            echo "SUPABASE_URL=\"${SUPABASE_URL}\""
-            echo "SUPABASE_SERVICE_ROLE_KEY=\"${SUPABASE_SERVICE_ROLE_KEY}\""
-            echo "OPENAI_API_KEY=\"${OPENAI_API_KEY}\""
-            echo "DISCORD_WEBHOOK_ALERTAS=\"${DISCORD_WEBHOOK_ALERTAS}\""
-            echo "DISCORD_WEBHOOK_PIPELINE=\"${DISCORD_WEBHOOK_PIPELINE}\""
-          } > .env
+          supabase-url: ${{ secrets.SUPABASE_URL }}
+          supabase-service-role-key: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          discord-webhook-alertas: ${{ secrets.DISCORD_WEBHOOK_ALERTAS }}
+          discord-webhook-pipeline: ${{ secrets.DISCORD_WEBHOOK_PIPELINE }}
 
       - name: Generate keywords
         run: |
           COUNT="${{ github.event.inputs.count || '30' }}"
           node scripts/auto-keywords.js --force --count "$COUNT"
-
-      - name: Shred .env
-        if: always()
-        run: rm -f .env

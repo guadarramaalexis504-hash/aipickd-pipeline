@@ -1,0 +1,8 @@
+node_modules/
+content-bank/
+reports/
+package-lock.json
+*.sql
+*.md
+*.bat
+*.ps1

@@ -13,15 +13,10 @@
  *
  * Usage: node scripts/anomaly-detector.js
  */
-const fs = require("fs");
-const path = require("path");
+const { loadEnv } = require("./lib/env");
+const { fetchWithRetry } = require("./lib/http");
 
-const envPath = path.join(__dirname, "..", ".env");
-const env = {};
-fs.readFileSync(envPath, "utf8").split("\n").forEach((line) => {
-  const m = line.match(/^([A-Z_]+)="?([^"\n]*)"?$/);
-  if (m) env[m[1]] = m[2];
-});
+const env = loadEnv();
 
 const anomalies = [];
 function flag(severity, type, message, data = {}) {
@@ -29,10 +24,22 @@ function flag(severity, type, message, data = {}) {
 }
 
 async function supa(endpoint) {
-  const r = await fetch(`${env.SUPABASE_URL}/rest/v1/${endpoint}`, {
-    headers: { apikey: env.SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}` },
-  });
-  return r.ok ? r.json() : null;
+  try {
+    const r = await fetchWithRetry(
+      `${env.SUPABASE_URL}/rest/v1/${endpoint}`,
+      {
+        headers: {
+          apikey: env.SUPABASE_SERVICE_ROLE_KEY,
+          Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+        },
+      },
+      { timeout: 15000, retries: 2 }
+    );
+    return r.ok ? r.json() : null;
+  } catch (e) {
+    process.stderr.write(`[anomaly-detector] supa(${endpoint}) failed: ${e.message}\n`);
+    return null;
+  }
 }
 
 (async () => {

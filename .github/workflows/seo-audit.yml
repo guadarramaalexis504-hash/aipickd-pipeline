@@ -30,31 +30,14 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Setup Node.js 20
-        uses: actions/setup-node@v4
+      - name: Setup AIPickd environment
+        uses: ./.github/actions/setup-env
         with:
-          node-version: "20"
-          cache: "npm"
-
-      - name: Install dependencies
-        run: npm ci --no-audit --no-fund --ignore-scripts
-
-      - name: Reconstruct .env
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          WP_USERNAME: ${{ secrets.WP_USERNAME }}
-          WP_ADMIN_PASSWORD: ${{ secrets.WP_ADMIN_PASSWORD }}
-          DISCORD_WEBHOOK_ALERTAS: ${{ secrets.DISCORD_WEBHOOK_ALERTAS }}
-        run: |
-          umask 077
-          {
-            echo "SUPABASE_URL=\"${SUPABASE_URL}\""
-            echo "SUPABASE_SERVICE_ROLE_KEY=\"${SUPABASE_SERVICE_ROLE_KEY}\""
-            echo "WP_USERNAME=\"${WP_USERNAME}\""
-            echo "WP_ADMIN_PASSWORD=\"${WP_ADMIN_PASSWORD}\""
-            echo "DISCORD_WEBHOOK_ALERTAS=\"${DISCORD_WEBHOOK_ALERTAS}\""
-          } > .env
+          supabase-url: ${{ secrets.SUPABASE_URL }}
+          supabase-service-role-key: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          wp-username: ${{ secrets.WP_USERNAME }}
+          wp-admin-password: ${{ secrets.WP_ADMIN_PASSWORD }}
+          discord-webhook-alertas: ${{ secrets.DISCORD_WEBHOOK_ALERTAS }}
 
       - name: Run SEO audit (fix mode)
         if: ${{ github.event.inputs.dry_run != 'true' }}
@@ -63,7 +46,3 @@ jobs:
       - name: Run SEO audit (dry-run mode)
         if: ${{ github.event.inputs.dry_run == 'true' }}
         run: node scripts/seo-audit.js --dry-run
-
-      - name: Always shred .env
-        if: always()
-        run: rm -f .env

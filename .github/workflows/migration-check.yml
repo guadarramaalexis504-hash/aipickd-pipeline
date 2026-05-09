@@ -1,0 +1,83 @@
+name: Migration Check
+
+on:
+  pull_request:
+    paths:
+      - "supabase/migrations/**"
+      - ".github/workflows/migration-check.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate new Supabase migrations
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: aipickd_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Verify migration filename convention
+        run: |
+          set -e
+          fail=0
+          for f in supabase/migrations/*.sql; do
+            base="$(basename "$f")"
+            if ! [[ "$base" =~ ^[0-9]{14}_[a-z0-9_]+\.sql$ ]]; then
+              echo "❌ $base — must match YYYYMMDDHHMMSS_snake_case.sql"
+              fail=1
+            fi
+          done
+          exit $fail
+
+      - name: Verify timestamps are monotonically increasing
+        run: |
+          set -e
+          prev=""
+          for f in $(ls supabase/migrations/*.sql | sort); do
+            ts="$(basename "$f" | cut -c1-14)"
+            if [ -n "$prev" ] && [ "$ts" \< "$prev" ]; then
+              echo "❌ Migration $f has timestamp $ts older than previous $prev"
+              exit 1
+            fi
+            prev="$ts"
+          done
+
+      - name: Wait for Postgres
+        run: |
+          for i in {1..30}; do
+            if PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d aipickd_test -c '\q' 2>/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+
+      - name: Apply all migrations to a clean Postgres
+        env:
+          PGPASSWORD: postgres
+        run: |
+          set -e
+          for f in $(ls supabase/migrations/*.sql | sort); do
+            echo "▶ Applying $f"
+            # Single transaction so partial failure rolls back cleanly.
+            psql -h 127.0.0.1 -U postgres -d aipickd_test -v ON_ERROR_STOP=1 --single-transaction -f "$f"
+          done
+          echo "✅ All migrations applied successfully."

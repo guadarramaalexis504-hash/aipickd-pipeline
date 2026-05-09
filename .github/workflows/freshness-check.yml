@@ -18,6 +18,11 @@ on:
 permissions:
   contents: read
 
+# May update articles' freshness status — share mutations group.
+concurrency:
+  group: aipickd-mutations
+  cancel-in-progress: false
+
 jobs:
   freshness-and-live:
     name: Freshness + live article check
@@ -30,29 +35,13 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Setup Node.js 20
-        uses: actions/setup-node@v4
+      - name: Setup AIPickd environment
+        uses: ./.github/actions/setup-env
         with:
-          node-version: "20"
-          cache: "npm"
-
-      - name: Install dependencies
-        run: npm ci --no-audit --no-fund --ignore-scripts
-
-      - name: Reconstruct .env
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          DISCORD_WEBHOOK_ALERTAS: ${{ secrets.DISCORD_WEBHOOK_ALERTAS }}
-          DISCORD_WEBHOOK_PIPELINE: ${{ secrets.DISCORD_WEBHOOK_PIPELINE }}
-        run: |
-          umask 077
-          {
-            echo "SUPABASE_URL=\"${SUPABASE_URL}\""
-            echo "SUPABASE_SERVICE_ROLE_KEY=\"${SUPABASE_SERVICE_ROLE_KEY}\""
-            echo "DISCORD_WEBHOOK_ALERTAS=\"${DISCORD_WEBHOOK_ALERTAS}\""
-            echo "DISCORD_WEBHOOK_PIPELINE=\"${DISCORD_WEBHOOK_PIPELINE}\""
-          } > .env
+          supabase-url: ${{ secrets.SUPABASE_URL }}
+          supabase-service-role-key: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          discord-webhook-alertas: ${{ secrets.DISCORD_WEBHOOK_ALERTAS }}
+          discord-webhook-pipeline: ${{ secrets.DISCORD_WEBHOOK_PIPELINE }}
 
       - name: Run freshness checker
         run: |
@@ -63,7 +52,3 @@ jobs:
         run: |
           COUNT="${{ github.event.inputs.check_count || '30' }}"
           node scripts/article-live-check.js --count "$COUNT"
-
-      - name: Always shred .env
-        if: always()
-        run: rm -f .env

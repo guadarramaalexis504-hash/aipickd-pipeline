@@ -22,13 +22,13 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - name: Setup AIPickd environment
+        uses: ./.github/actions/setup-env
         with:
-          node-version: "20"
-          cache: "npm"
-
-      - name: Install npm deps
-        run: npm ci --no-audit --no-fund --ignore-scripts || npm install --no-audit --no-fund --ignore-scripts
+          supabase-url: ${{ secrets.SUPABASE_URL }}
+          supabase-service-role-key: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          discord-webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          discord-webhook-alertas: ${{ secrets.DISCORD_WEBHOOK_ALERTAS }}
 
       - name: Cache Playwright browsers
         uses: actions/cache@v4
@@ -39,31 +39,8 @@ jobs:
       - name: Install Playwright Chromium
         run: npx playwright install chromium --with-deps
 
-      - name: Reconstruct .env (minimal)
+      - name: Run site monitor (alert-only mode)
         env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          DISCORD_WEBHOOK_ALERTAS: ${{ secrets.DISCORD_WEBHOOK_ALERTAS }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: |
-          umask 077
-          {
-            echo "SUPABASE_URL=\"${SUPABASE_URL}\""
-            echo "SUPABASE_SERVICE_ROLE_KEY=\"${SUPABASE_SERVICE_ROLE_KEY}\""
-            echo "DISCORD_WEBHOOK_URL=\"${DISCORD_WEBHOOK_URL}\""
-            echo "DISCORD_WEBHOOK_ALERTAS=\"${DISCORD_WEBHOOK_ALERTAS}\""
-            echo "TELEGRAM_BOT_TOKEN=\"${TELEGRAM_BOT_TOKEN}\""
-            echo "TELEGRAM_CHAT_ID=\"${TELEGRAM_CHAT_ID}\""
-          } > .env
-
-      - name: Run site monitor (alert-only mode)
         run: node scripts/monitor-site.js --alert
-
-      - name: Shred .env
-        if: always()
-        run: |
-          if [ -f .env ]; then
-            shred -u .env 2>/dev/null || rm -f .env
-          fi

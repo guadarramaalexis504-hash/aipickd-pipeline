@@ -18,41 +18,25 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
+    env:
+      MONTHLY_BUDGET: "50"
+      DAILY_BUDGET: "3"
+
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - name: Setup AIPickd environment
+        uses: ./.github/actions/setup-env
         with:
-          node-version: "20"
-
-      - name: Reconstruct .env (daily report — Discord + Supabase)
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          DISCORD_WEBHOOK_PIPELINE: ${{ secrets.DISCORD_WEBHOOK_PIPELINE }}
-          DISCORD_WEBHOOK_ALERTAS: ${{ secrets.DISCORD_WEBHOOK_ALERTAS }}
-          DISCORD_WEBHOOK_REPORTES: ${{ secrets.DISCORD_WEBHOOK_REPORTES }}
-          MONTHLY_BUDGET: "50"
-          DAILY_BUDGET: "3"
-        run: |
-          umask 077
-          {
-            echo "SUPABASE_URL=\"${SUPABASE_URL}\""
-            echo "SUPABASE_SERVICE_ROLE_KEY=\"${SUPABASE_SERVICE_ROLE_KEY}\""
-            echo "DISCORD_WEBHOOK_URL=\"${DISCORD_WEBHOOK_URL}\""
-            echo "DISCORD_WEBHOOK_PIPELINE=\"${DISCORD_WEBHOOK_PIPELINE}\""
-            echo "DISCORD_WEBHOOK_ALERTAS=\"${DISCORD_WEBHOOK_ALERTAS}\""
-            echo "DISCORD_WEBHOOK_REPORTES=\"${DISCORD_WEBHOOK_REPORTES}\""
-            echo "MONTHLY_BUDGET=\"50\""
-            echo "DAILY_BUDGET=\"3\""
-          } > .env
+          supabase-url: ${{ secrets.SUPABASE_URL }}
+          supabase-service-role-key: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          discord-webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          discord-webhook-pipeline: ${{ secrets.DISCORD_WEBHOOK_PIPELINE }}
+          discord-webhook-alertas: ${{ secrets.DISCORD_WEBHOOK_ALERTAS }}
 
       - name: Send daily digest to Discord
+        env:
+          DISCORD_WEBHOOK_REPORTES: ${{ secrets.DISCORD_WEBHOOK_REPORTES }}
         run: node scripts/daily-report.js
-
-      - name: Shred .env
-        if: always()
-        run: rm -f .env

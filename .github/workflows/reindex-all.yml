@@ -3,7 +3,6 @@ name: Re-Index All Articles
 on:
   workflow_dispatch:
 
-# Minimal permissions — only reads code + calls external APIs
 permissions:
   contents: read
 
@@ -23,27 +22,12 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Setup Node.js 20
-        uses: actions/setup-node@v4
+      - name: Setup AIPickd environment
+        uses: ./.github/actions/setup-env
         with:
-          node-version: "20"
-          cache: "npm"
-
-      - name: Install dependencies
-        run: npm ci --no-audit --no-fund --ignore-scripts || npm install --no-audit --no-fund --ignore-scripts
-
-      - name: Reconstruct .env
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          DISCORD_WEBHOOK_ALERTAS: ${{ secrets.DISCORD_WEBHOOK_ALERTAS }}
-        run: |
-          umask 077
-          {
-            echo "SUPABASE_URL=\"${SUPABASE_URL}\""
-            echo "SUPABASE_SERVICE_ROLE_KEY=\"${SUPABASE_SERVICE_ROLE_KEY}\""
-            echo "DISCORD_WEBHOOK_ALERTAS=\"${DISCORD_WEBHOOK_ALERTAS}\""
-          } > .env
+          supabase-url: ${{ secrets.SUPABASE_URL }}
+          supabase-service-role-key: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          discord-webhook-alertas: ${{ secrets.DISCORD_WEBHOOK_ALERTAS }}
 
       - name: Ping sitemap to Google + Bing
         run: node scripts/sitemap-update.js
@@ -53,24 +37,9 @@ jobs:
 
       - name: Notify Discord — reindex complete
         if: always()
-        env:
-          DISCORD_WEBHOOK_ALERTAS: ${{ secrets.DISCORD_WEBHOOK_ALERTAS }}
         run: |
           node -e "
-          const webhook = process.env.DISCORD_WEBHOOK_ALERTAS;
-          if (!webhook) { console.log('No webhook configured'); process.exit(0); }
-          fetch(webhook, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              content: '🔍 **Re-indexación masiva completada**\n✅ Sitemap pingeado a Google + Bing\n✅ Todos los URLs enviados a IndexNow (Bing/Yandex)\n\n⏱️ Bing: 24-72h | Google: 1-4 semanas\n💡 Recuerda enviar el sitemap en Google Search Console manualmente.'
-            })
-          }).then(r => console.log('Discord:', r.status)).catch(console.error);
+          const { notify } = require('./scripts/notify.js');
+          notify('alertas', { content: '🔍 **Re-indexación masiva completada**\n✅ Sitemap pingeado a Google + Bing\n✅ Todos los URLs enviados a IndexNow (Bing/Yandex)\n\n⏱️ Bing: 24-72h | Google: 1-4 semanas\n💡 Recuerda enviar el sitemap en Google Search Console manualmente.' })
+            .then(r => console.log('Discord:', r.ok ? 'OK' : r.reason || r.status));
           "
-
-      - name: Always shred .env
-        if: always()
-        run: |
-          if [ -f .env ]; then
-            shred -u .env 2>/dev/null || rm -f .env
-          fi

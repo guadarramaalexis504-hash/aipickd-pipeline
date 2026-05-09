@@ -125,7 +125,7 @@ async function wp(endpoint) {
   for (const a of affiliates) affByStatus[a.status] = (affByStatus[a.status] || 0) + 1;
 
   const totalWords = allArticles.reduce((s, a) => s + (a.word_count || 0), 0);
-  const avgWords = Math.round(totalWords / Math.max(1, allArticles.length));
+  const overallAvgWords = Math.round(totalWords / Math.max(1, allArticles.length));
 
   // Build report
   const dateStr = now.toISOString().slice(0, 10);
@@ -151,7 +151,7 @@ async function wp(endpoint) {
 | Metric | Value |
 |--------|-------|
 | Total articles | ${allArticles.length} |
-| Average word count | ${avgWords} words |
+| Average word count | ${overallAvgWords} words |
 | Total words written | ${totalWords.toLocaleString()} |
 | Articles with featured images | ${withImages}/${allArticles.length} |
 | Keywords remaining in queue | ${keywords.filter((k) => k.status === "queued").length} |

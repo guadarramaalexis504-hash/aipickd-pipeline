@@ -1,0 +1,99 @@
+name: "Setup AIPickd Environment"
+description: "Checkout, install Node 20 deps, and export AIPickd secrets to the job env (no .env file written)."
+
+inputs:
+  supabase-url:
+    description: "Supabase project URL"
+    required: true
+  supabase-service-role-key:
+    description: "Supabase service-role key"
+    required: true
+  openai-api-key:
+    description: "OpenAI API key"
+    required: false
+    default: ""
+  anthropic-api-key:
+    description: "Anthropic API key"
+    required: false
+    default: ""
+  wp-username:
+    description: "WordPress username"
+    required: false
+    default: ""
+  wp-admin-password:
+    description: "WordPress application password"
+    required: false
+    default: ""
+  discord-webhook-url:
+    description: "Default Discord webhook"
+    required: false
+    default: ""
+  discord-webhook-articulos:
+    description: "Discord webhook for #articulos-publicados"
+    required: false
+    default: ""
+  discord-webhook-pipeline:
+    description: "Discord webhook for #pipeline-status"
+    required: false
+    default: ""
+  discord-webhook-alertas:
+    description: "Discord webhook for #alertas"
+    required: false
+    default: ""
+  install-deps:
+    description: "Run npm ci (set false to skip)"
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Node.js 20
+      uses: actions/setup-node@v4
+      with:
+        node-version: "20"
+        cache: "npm"
+
+    - name: Install dependencies
+      if: ${{ inputs.install-deps == 'true' }}
+      shell: bash
+      run: npm ci --no-audit --no-fund --ignore-scripts || npm install --no-audit --no-fund --ignore-scripts
+
+    - name: Export AIPickd secrets to job env
+      shell: bash
+      env:
+        SUPABASE_URL: ${{ inputs.supabase-url }}
+        SUPABASE_SERVICE_ROLE_KEY: ${{ inputs.supabase-service-role-key }}
+        OPENAI_API_KEY: ${{ inputs.openai-api-key }}
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
+        WP_USERNAME: ${{ inputs.wp-username }}
+        WP_ADMIN_PASSWORD: ${{ inputs.wp-admin-password }}
+        DISCORD_WEBHOOK_URL: ${{ inputs.discord-webhook-url }}
+        DISCORD_WEBHOOK_ARTICULOS: ${{ inputs.discord-webhook-articulos }}
+        DISCORD_WEBHOOK_PIPELINE: ${{ inputs.discord-webhook-pipeline }}
+        DISCORD_WEBHOOK_ALERTAS: ${{ inputs.discord-webhook-alertas }}
+      run: |
+        # Use the GH-provided multiline-safe writer instead of `echo VAR=$VALUE`,
+        # which mangles values containing newlines, quotes, or backticks.
+        write_env() {
+          local name="$1"
+          local value="$2"
+          if [ -z "$value" ]; then
+            return
+          fi
+          {
+            printf '%s<<__AIPICKD_EOF__\n' "$name"
+            printf '%s\n' "$value"
+            printf '__AIPICKD_EOF__\n'
+          } >> "$GITHUB_ENV"
+        }
+        write_env SUPABASE_URL                "$SUPABASE_URL"
+        write_env SUPABASE_SERVICE_ROLE_KEY   "$SUPABASE_SERVICE_ROLE_KEY"
+        write_env OPENAI_API_KEY              "$OPENAI_API_KEY"
+        write_env ANTHROPIC_API_KEY           "$ANTHROPIC_API_KEY"
+        write_env WP_USERNAME                 "$WP_USERNAME"
+        write_env WP_ADMIN_PASSWORD           "$WP_ADMIN_PASSWORD"
+        write_env DISCORD_WEBHOOK_URL         "$DISCORD_WEBHOOK_URL"
+        write_env DISCORD_WEBHOOK_ARTICULOS   "$DISCORD_WEBHOOK_ARTICULOS"
+        write_env DISCORD_WEBHOOK_PIPELINE    "$DISCORD_WEBHOOK_PIPELINE"
+        write_env DISCORD_WEBHOOK_ALERTAS     "$DISCORD_WEBHOOK_ALERTAS"

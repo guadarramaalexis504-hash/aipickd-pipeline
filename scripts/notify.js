@@ -18,18 +18,10 @@
  *   node scripts/notify.js budget 72 36 50
  */
 
-const fs = require('fs');
-const path = require('path');
+const { loadEnv } = require('./lib/env');
+const { fetchWithRetry } = require('./lib/http');
 
-// Load .env
-const envPath = path.join(__dirname, '..', '.env');
-const env = {};
-try {
-  fs.readFileSync(envPath, 'utf8').split('\n').forEach((line) => {
-    const m = line.match(/^([A-Z0-9_]+)="?([^"\n]*)"?$/);
-    if (m) env[m[1]] = m[2];
-  });
-} catch {}
+const env = loadEnv();
 
 // ─────────────────────────────────────────────
 // Core: POST to Discord webhook with embed
@@ -37,11 +29,15 @@ try {
 async function postWebhook(url, payload) {
   if (!url) return { ok: false, reason: 'webhook URL not configured' };
   try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
+    const res = await fetchWithRetry(
+      url,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      },
+      { timeout: 10000, retries: 2 }
+    );
     if (res.status === 204 || res.ok) return { ok: true };
     const text = await res.text().catch(() => '');
     return { ok: false, status: res.status, body: text };
