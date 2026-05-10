@@ -20,37 +20,13 @@
  *   node scripts/cleanup-stuck-drafts.js --dry-run   # solo reporta
  */
 
-const fs   = require('fs');
-const path = require('path');
+const { loadEnv } = require('./lib/env');
+const { supa } = require('./lib/clients');
 
-const envPath = path.join(__dirname, '..', '.env');
-const env = {};
-try {
-  fs.readFileSync(envPath, 'utf8').split('\n').forEach(line => {
-    const m = line.match(/^([A-Z0-9_]+)="?([^"\n]*)"?$/);
-    if (m) env[m[1]] = m[2];
-  });
-} catch {}
-
+const env = loadEnv();
 const args   = process.argv.slice(2);
 const DRY_RUN = args.includes('--dry-run');
 const DAYS    = parseInt(args[args.indexOf('--days') + 1]) || 5;
-
-async function supa(method, endpoint, body) {
-  const res = await fetch(`${env.SUPABASE_URL}/rest/v1/${endpoint}`, {
-    method,
-    headers: {
-      apikey: env.SUPABASE_SERVICE_ROLE_KEY,
-      Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
-      'Content-Type': 'application/json',
-      Prefer: 'return=representation',
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  const text = await res.text();
-  if (!res.ok) throw new Error(`Supabase ${method} ${endpoint}: ${res.status} ${text.slice(0,200)}`);
-  return text ? JSON.parse(text) : null;
-}
 
 (async () => {
   console.log('== AIPickd cleanup-stuck-drafts ==');

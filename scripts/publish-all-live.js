@@ -9,46 +9,11 @@
  *   node scripts/publish-all-live.js --go --drip  # schedule them to publish every 6h (drip mode)
  */
 
-const fs = require("fs");
-const path = require("path");
+const { supa, wp } = require("./lib/clients");
 
-const envPath = path.join(__dirname, "..", ".env");
-const env = {};
-fs.readFileSync(envPath, "utf8").split("\n").forEach((line) => {
-  const m = line.match(/^([A-Z_]+)="?([^"\n]*)"?$/);
-  if (m) env[m[1]] = m[2];
-});
-
-const { WP_USERNAME, WP_ADMIN_PASSWORD, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = env;
-const auth = Buffer.from(`${WP_USERNAME}:${WP_ADMIN_PASSWORD}`).toString("base64");
 const args = process.argv.slice(2);
 const DRY = !args.includes("--go");
 const DRIP = args.includes("--drip");
-
-async function wp(method, endpoint, body) {
-  const res = await fetch(`https://aipickd.com/wp-json/wp/v2/${endpoint}`, {
-    method,
-    headers: { Authorization: `Basic ${auth}`, "Content-Type": "application/json" },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  const text = await res.text();
-  if (!res.ok) throw new Error(`WP: ${res.status} ${text.slice(0, 200)}`);
-  return text ? JSON.parse(text) : null;
-}
-
-async function supa(method, endpoint, body) {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/${endpoint}`, {
-    method,
-    headers: {
-      apikey: SUPABASE_SERVICE_ROLE_KEY,
-      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  if (!res.ok) throw new Error(`Supa: ${res.status}`);
-  return await res.json();
-}
 
 (async () => {
   console.log(`== publish-all-live ${DRY ? "(DRY RUN)" : "(LIVE)"} ${DRIP ? "[DRIP MODE]" : ""} ==\n`);
