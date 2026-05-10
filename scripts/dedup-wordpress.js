@@ -18,62 +18,16 @@
  *   node scripts/dedup-wordpress.js --fix --quiet  # borra sin ruido
  */
 
-const fs = require("fs");
-const path = require("path");
+const { loadEnv } = require("./lib/env");
+const { supa, wp } = require("./lib/clients");
 
-const envPath = path.join(__dirname, "..", ".env");
-const env = {};
-try {
-  fs.readFileSync(envPath, "utf8").split("\n").forEach((line) => {
-    const m = line.match(/^([A-Z0-9_]+)="?([^"\n]*)"?$/);
-    if (m) env[m[1]] = m[2];
-  });
-} catch {}
-
-const {
-  SUPABASE_URL,
-  SUPABASE_SERVICE_ROLE_KEY,
-  WP_USERNAME,
-  WP_ADMIN_PASSWORD,
-  DISCORD_WEBHOOK_ALERTAS,
-} = env;
+const env = loadEnv();
+const { DISCORD_WEBHOOK_ALERTAS } = env;
 
 const FIX_MODE = process.argv.includes("--fix");
 const QUIET = process.argv.includes("--quiet");
 
 const log = (...args) => { if (!QUIET) console.log(...args); };
-
-// --- helpers ---
-async function wp(method, endpoint, body) {
-  const auth = Buffer.from(`${WP_USERNAME}:${WP_ADMIN_PASSWORD}`).toString("base64");
-  const res = await fetch(`https://aipickd.com/wp-json/wp/v2/${endpoint}`, {
-    method,
-    headers: {
-      Authorization: `Basic ${auth}`,
-      "Content-Type": "application/json",
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  const text = await res.text();
-  if (!res.ok) throw new Error(`WP ${method} ${endpoint}: ${res.status} ${text.slice(0, 200)}`);
-  return text ? JSON.parse(text) : null;
-}
-
-async function supa(method, endpoint, body) {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/${endpoint}`, {
-    method,
-    headers: {
-      apikey: SUPABASE_SERVICE_ROLE_KEY,
-      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-      "Content-Type": "application/json",
-      Prefer: "return=representation",
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  const text = await res.text();
-  if (!res.ok) throw new Error(`Supabase ${method} ${endpoint}: ${res.status} ${text.slice(0, 200)}`);
-  return text ? JSON.parse(text) : null;
-}
 
 async function notifyAlert(msg) {
   if (!DISCORD_WEBHOOK_ALERTAS) return;
