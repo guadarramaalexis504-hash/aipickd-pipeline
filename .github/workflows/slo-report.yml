@@ -1,0 +1,57 @@
+name: SLO Weekly Report
+
+on:
+  schedule:
+    # Every Monday 14:00 UTC = 8 AM Mexico City.
+    - cron: "0 14 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: aipickd-slo
+  cancel-in-progress: true
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup AIPickd environment
+        uses: ./.github/actions/setup-env
+        with:
+          supabase-url: ${{ secrets.SUPABASE_URL }}
+          supabase-service-role-key: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          discord-webhook-alertas: ${{ secrets.DISCORD_WEBHOOK_ALERTAS }}
+
+      - name: Compute and post SLO
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          DISCORD_WEBHOOK_REPORTES: ${{ secrets.DISCORD_WEBHOOK_REPORTES }}
+        run: |
+          node -e "
+          (async () => {
+            const slo = require('./scripts/lib/slo');
+            const runs = await slo.fetchRecentRuns({ workflow: 'generate.yml', days: 30 });
+            const metrics = slo.computeMetrics(runs);
+            const dlq = await slo.dlqGrowth({ days: 30 }).catch(() => ({ count: 0, perDay: 0 }));
+            const summary = slo.formatSummary(metrics, dlq);
+            console.log(summary);
+            const url = process.env.DISCORD_WEBHOOK_REPORTES || process.env.DISCORD_WEBHOOK_ALERTAS;
+            if (!url) { console.log('No webhook configured'); return; }
+            const res = await fetch(url, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ content: summary }),
+            });
+            console.log('Discord:', res.status);
+          })().catch((e) => { console.error(e); process.exit(1); });
+          "

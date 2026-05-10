@@ -1,0 +1,48 @@
+name: Dashboard Update
+
+on:
+  schedule:
+    # Daily at 06:00 UTC.
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: aipickd-dashboard
+  cancel-in-progress: true
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup AIPickd environment
+        uses: ./.github/actions/setup-env
+        with:
+          supabase-url: ${{ secrets.SUPABASE_URL }}
+          supabase-service-role-key: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+
+      - name: Generate dashboard
+        run: |
+          mkdir -p docs
+          node -e "require('./scripts/lib/dashboard').render().then((md) => process.stdout.write(md))" > docs/dashboard.md
+
+      - name: Commit if changed
+        env:
+          GIT_AUTHOR_NAME: github-actions[bot]
+          GIT_AUTHOR_EMAIL: github-actions[bot]@users.noreply.github.com
+          GIT_COMMITTER_NAME: github-actions[bot]
+          GIT_COMMITTER_EMAIL: github-actions[bot]@users.noreply.github.com
+        run: |
+          if [ -z "$(git status --porcelain docs/dashboard.md)" ]; then
+            echo "No dashboard changes — skipping commit."
+            exit 0
+          fi
+          git add docs/dashboard.md
+          git commit -m "chore(dashboard): daily update [skip ci]"
+          git push origin HEAD:main

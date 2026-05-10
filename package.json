@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "AIPickd autonomous AI affiliate blog pipeline",
   "private": true,
+  "bin": {
+    "aipickd": "scripts/cli.js"
+  },
   "scripts": {
     "pipeline": "node scripts/run-pipeline.js",
     "long": "node scripts/generate-long-article.js",
@@ -10,12 +13,14 @@
     "health": "node scripts/health-check.js",
     "monitor": "node scripts/monitor-site.js",
     "dashboard": "node scripts/generate-dashboard.js",
+    "cli": "node scripts/cli.js",
     "lint": "eslint \"scripts/**/*.js\" \"tests/**/*.js\"",
     "lint:fix": "eslint --fix \"scripts/**/*.js\" \"tests/**/*.js\"",
     "format": "prettier --check \"scripts/lib/**/*.js\" \"tests/**/*.js\"",
     "format:fix": "prettier --write \"scripts/lib/**/*.js\" \"tests/**/*.js\"",
     "syntax-check": "find scripts -maxdepth 2 -name '*.js' -print0 | xargs -0 -n1 node --check",
     "test": "node --test tests/*.js",
+    "test:coverage": "node --test --experimental-test-coverage tests/*.js",
     "validate": "npm run syntax-check && npm run lint && npm test"
   },
   "engines": {
