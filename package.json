@@ -22,7 +22,7 @@
     "node": ">=20"
   },
   "dependencies": {
-    "nodemailer": "^8.0.5",
+    "nodemailer": "^8.0.7",
     "playwright": "^1.59.1"
   },
   "devDependencies": {
