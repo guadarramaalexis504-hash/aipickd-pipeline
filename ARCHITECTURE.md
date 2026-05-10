@@ -37,13 +37,23 @@ aipickd-pipeline/
 │   ├── run-pipeline.js       ← main orchestrator
 │   ├── lib/                  ← shared helpers (use these in new code)
 │   │   ├── env.js            ← centralized env loader
-│   │   ├── http.js           ← fetch with retry/backoff/timeout
-│   │   ├── clients.js        ← supa() and wp() built on http.js
-│   │   └── log.js            ← structured JSON logger
+│   │   ├── http.js           ← fetch with retry/backoff/timeout + SSRF allowlist
+│   │   ├── clients.js        ← supa() and wp(), wrapped in circuit breaker + rate limiter
+│   │   ├── log.js            ← structured JSON logger
+│   │   ├── circuit-breaker.js ← fast-fail during sustained service outages
+│   │   ├── rate-limiter.js   ← token-bucket throttle (used by wp() client)
+│   │   ├── idempotency.js    ← deterministic publishKey() to prevent duplicates
+│   │   ├── heartbeat.js      ← healthchecks.io ping helper
+│   │   ├── bulk.js           ← bulkInsert/bulkUpsert/bulkUpdate (chunked)
+│   │   ├── dlq.js            ← failed_keywords archive helpers
+│   │   ├── articles.js       ← softDelete/restore helpers
+│   │   └── jsonld.js         ← Schema.org validators (Article/Review/Product/FAQPage/Breadcrumb)
 │   ├── validate-secrets.js   ← pre-flight gate before generation
 │   ├── cost-monitor.js       ← daily/monthly budget enforcement
 │   ├── anomaly-detector.js   ← hourly anomaly checks
 │   ├── monitor-site.js       ← Playwright site health check
+│   ├── affiliate-expired-detector.js  ← weekly affiliate URL health check + auto-swap
+│   ├── affiliate-redirect-installer.js ← generates the WP mu-plugin for /go/<slug>
 │   ├── notify.js             ← Discord webhook helpers (5 channels)
 │   └── ...                   ← ~80 task-specific scripts
 ├── tests/                    ← node:test (built-in, no extra deps)
@@ -80,6 +90,11 @@ aipickd-pipeline/
 | `security-scan.yml` | push/PR + weekly | secret scan + npm audit + CodeQL |
 | `ci.yml` | push/PR | lint + format + tests + actionlint |
 | `migration-check.yml` | PR | apply migrations to clean Postgres |
+| `affiliate-expired-check.yml` | weekly | detect expired affiliate URLs, auto-swap if replacement set |
+| `wp-password-rotation-reminder.yml` | quarterly | open issue with rotation steps |
+| `release-please.yml` | push to main | open release PR from Conventional Commits |
+| `stale.yml` | daily | mark and close inactive issues/PRs |
+| `pr-label.yml` | pull_request_target | auto-label by changed paths |
 
 ### Cross-workflow concurrency
 

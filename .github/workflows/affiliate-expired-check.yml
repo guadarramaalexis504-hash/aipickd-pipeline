@@ -1,0 +1,48 @@
+name: Affiliate Expired Check
+
+on:
+  schedule:
+    # Every Tuesday at 06:00 UTC — out of the way of generation/reports.
+    - cron: "0 6 * * 2"
+  workflow_dispatch:
+    inputs:
+      fix:
+        description: "Apply auto-swaps and mark expired (otherwise dry-run)"
+        required: false
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aipickd-affiliate-check
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup AIPickd environment
+        uses: ./.github/actions/setup-env
+        with:
+          supabase-url: ${{ secrets.SUPABASE_URL }}
+          supabase-service-role-key: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          discord-webhook-alertas: ${{ secrets.DISCORD_WEBHOOK_ALERTAS }}
+
+      - name: Run affiliate health check
+        run: |
+          if [ "${{ github.event.inputs.fix || 'true' }}" = "true" ]; then
+            node scripts/affiliate-expired-detector.js --fix
+          else
+            node scripts/affiliate-expired-detector.js
+          fi
