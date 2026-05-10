@@ -19,16 +19,10 @@
  *   node scripts/monitor-site.js --alert    # only alert on errors (silent if OK)
  */
 
-const fs = require("fs");
-const path = require("path");
 const { notify, notifyUptimeDown, notifyUptimeRestored, notifyAlert } = require("./notify.js");
+const { loadEnv } = require("./lib/env");
 
-const envPath = path.join(__dirname, "..", ".env");
-const env = {};
-fs.readFileSync(envPath, "utf8").split("\n").forEach((line) => {
-  const m = line.match(/^([A-Z_]+)="?([^"\n]*)"?$/);
-  if (m) env[m[1]] = m[2];
-});
+const env = loadEnv();
 
 const ALERT_ONLY = process.argv.includes("--alert");
 

@@ -11,13 +11,13 @@ on:
         required: false
         default: "1"
 
-# Minimal permissions — workflow only reads code + writes to external APIs.
 permissions:
   contents: read
 
-# Prevent two pipelines from running concurrently (they'd race on keyword queue).
+# Two-level concurrency: this workflow doesn't race itself AND doesn't race
+# any other workflow that mutates Supabase (auto-keywords, dedup-keywords, etc).
 concurrency:
-  group: aipickd-generate
+  group: aipickd-mutations
   cancel-in-progress: false
 
 jobs:
@@ -25,62 +25,41 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
 
+    env:
+      AUTO_PUBLISH: "true"
+      DAILY_BUDGET: "3"
+      MONTHLY_BUDGET: "50"
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           persist-credentials: false
 
-      - name: Setup Node.js 20
-        uses: actions/setup-node@v4
+      - name: Setup AIPickd environment
+        uses: ./.github/actions/setup-env
         with:
-          node-version: "20"
-          cache: "npm"
+          supabase-url: ${{ secrets.SUPABASE_URL }}
+          supabase-service-role-key: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          wp-username: ${{ secrets.WP_USERNAME }}
+          wp-admin-password: ${{ secrets.WP_ADMIN_PASSWORD }}
+          discord-webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          discord-webhook-articulos: ${{ secrets.DISCORD_WEBHOOK_ARTICULOS }}
+          discord-webhook-pipeline: ${{ secrets.DISCORD_WEBHOOK_PIPELINE }}
+          discord-webhook-alertas: ${{ secrets.DISCORD_WEBHOOK_ALERTAS }}
 
-      - name: Install dependencies
-        run: npm ci --no-audit --no-fund --ignore-scripts || npm install --no-audit --no-fund --ignore-scripts
-
-      - name: Reconstruct .env from secrets (in-memory only)
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          WP_USERNAME: ${{ secrets.WP_USERNAME }}
-          WP_ADMIN_PASSWORD: ${{ secrets.WP_ADMIN_PASSWORD }}
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          DISCORD_WEBHOOK_ARTICULOS: ${{ secrets.DISCORD_WEBHOOK_ARTICULOS }}
-          DISCORD_WEBHOOK_PIPELINE: ${{ secrets.DISCORD_WEBHOOK_PIPELINE }}
-          DISCORD_WEBHOOK_ALERTAS: ${{ secrets.DISCORD_WEBHOOK_ALERTAS }}
-        run: |
-          umask 077
-          {
-            echo "SUPABASE_URL=\"${SUPABASE_URL}\""
-            echo "SUPABASE_SERVICE_ROLE_KEY=\"${SUPABASE_SERVICE_ROLE_KEY}\""
-            echo "OPENAI_API_KEY=\"${OPENAI_API_KEY}\""
-            echo "ANTHROPIC_API_KEY=\"${ANTHROPIC_API_KEY}\""
-            echo "WP_USERNAME=\"${WP_USERNAME}\""
-            echo "WP_ADMIN_PASSWORD=\"${WP_ADMIN_PASSWORD}\""
-            echo "AUTO_PUBLISH=\"true\""
-            echo "DAILY_BUDGET=\"2\""
-            echo "DISCORD_WEBHOOK_URL=\"${DISCORD_WEBHOOK_URL}\""
-            echo "DISCORD_WEBHOOK_ARTICULOS=\"${DISCORD_WEBHOOK_ARTICULOS}\""
-            echo "DISCORD_WEBHOOK_PIPELINE=\"${DISCORD_WEBHOOK_PIPELINE}\""
-            echo "DISCORD_WEBHOOK_ALERTAS=\"${DISCORD_WEBHOOK_ALERTAS}\""
-          } > .env
-
+      # ── Critical: any failure here MUST stop the pipeline ──────────────
       - name: Validate secrets present
         run: node scripts/validate-secrets.js
 
       - name: Enforce daily/monthly budget
-        env:
-          DAILY_BUDGET: "3"
-          MONTHLY_BUDGET: "50"
         run: node scripts/cost-monitor.js --enforce
 
       - name: Run pipeline (generate + publish)
+        id: run-pipeline
         run: |
-          # Weekend burst mode: generate 2 articles on Sat/Sun to boost weekly output
           DAY_OF_WEEK=$(date -u +%u)  # 1=Mon ... 6=Sat, 7=Sun
           if [ -n "${{ github.event.inputs.gen_count }}" ]; then
             GEN="${{ github.event.inputs.gen_count }}"
@@ -90,60 +69,100 @@ jobs:
           else
             GEN=1
           fi
-          # Cap to 5 max even if user requests more
           if [ "$GEN" -gt 5 ]; then GEN=5; fi
           node scripts/run-pipeline.js --gen "$GEN"
 
+      # ── Post-publish steps: failures here are NON-CRITICAL ─────────────
+      # The article is already published. If sitemap ping fails, that's
+      # recoverable. We track failures in step outputs and report them in
+      # the final Discord notification — no false "PIPELINE FAILED" alarms.
       - name: Auto-refill keyword queue (if < 50 keywords)
-        if: success()
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        id: post-keywords
+        continue-on-error: true
         run: node scripts/auto-keywords.js
 
       - name: Dedup keyword queue (remove similar keywords)
-        if: success()
+        id: post-dedup-keywords
+        continue-on-error: true
         run: node scripts/dedup-keywords.js --fix
 
       - name: Cleanup stuck drafts (draft >5 days with no WP post)
-        if: success()
+        id: post-cleanup-drafts
+        continue-on-error: true
         run: node scripts/cleanup-stuck-drafts.js
 
       - name: Auto-dedup WordPress (remove duplicate posts)
-        if: success()
+        id: post-dedup-wp
+        continue-on-error: true
         run: node scripts/dedup-wordpress.js --fix --quiet
 
       - name: Add internal links to newly published articles
-        if: success()
+        id: post-internal-links
+        continue-on-error: true
         run: node scripts/internal-links.js --hours 6
 
       - name: Inject CTA buttons + reading time into new articles
-        if: success()
+        id: post-cta
+        continue-on-error: true
         run: node scripts/cta-injector.js --hours 6 --go
 
       - name: Trending keywords (Mondays only)
-        if: success()
+        id: post-trending
+        continue-on-error: true
         run: node scripts/trending-keywords.js
 
       - name: Queue stale articles for refresh
-        if: success()
+        id: post-refresh
+        continue-on-error: true
         run: node scripts/article-refresh.js
 
       - name: Ping sitemap to Google + Bing (post-publish)
-        if: success()
+        id: post-sitemap
+        continue-on-error: true
         run: node scripts/sitemap-update.js
 
       - name: Submit all published URLs to IndexNow (Bing/Yandex)
-        if: success()
+        id: post-indexnow
+        continue-on-error: true
         run: node scripts/bulk-indexnow.js
 
       - name: Notify Discord — pipeline completed
         if: success()
+        env:
+          GEN_COUNT: ${{ github.event.inputs.gen_count || '1' }}
+          POST_KEYWORDS: ${{ steps.post-keywords.outcome }}
+          POST_DEDUP_KEYWORDS: ${{ steps.post-dedup-keywords.outcome }}
+          POST_CLEANUP_DRAFTS: ${{ steps.post-cleanup-drafts.outcome }}
+          POST_DEDUP_WP: ${{ steps.post-dedup-wp.outcome }}
+          POST_INTERNAL_LINKS: ${{ steps.post-internal-links.outcome }}
+          POST_CTA: ${{ steps.post-cta.outcome }}
+          POST_TRENDING: ${{ steps.post-trending.outcome }}
+          POST_REFRESH: ${{ steps.post-refresh.outcome }}
+          POST_SITEMAP: ${{ steps.post-sitemap.outcome }}
+          POST_INDEXNOW: ${{ steps.post-indexnow.outcome }}
         run: |
           node -e "
-          const {notifyPipeline} = require('./scripts/notify.js');
-          notifyPipeline('✅ Pipeline completado exitosamente', {
-            articlesGenerated: ${{ github.event.inputs.gen_count || '1' }},
+          const { notifyPipeline } = require('./scripts/notify.js');
+          const steps = {
+            'auto-keywords':      process.env.POST_KEYWORDS,
+            'dedup-keywords':     process.env.POST_DEDUP_KEYWORDS,
+            'cleanup-drafts':     process.env.POST_CLEANUP_DRAFTS,
+            'dedup-wordpress':    process.env.POST_DEDUP_WP,
+            'internal-links':     process.env.POST_INTERNAL_LINKS,
+            'cta-injector':       process.env.POST_CTA,
+            'trending-keywords':  process.env.POST_TRENDING,
+            'article-refresh':    process.env.POST_REFRESH,
+            'sitemap-update':     process.env.POST_SITEMAP,
+            'bulk-indexnow':      process.env.POST_INDEXNOW,
+          };
+          const failed = Object.entries(steps).filter(([, v]) => v === 'failure').map(([k]) => k);
+          const msg = failed.length === 0
+            ? '✅ Pipeline completado exitosamente'
+            : '⚠️ Pipeline completado con ' + failed.length + ' post-step(s) fallidos: ' + failed.join(', ');
+          notifyPipeline(msg, {
+            articlesGenerated: process.env.GEN_COUNT,
             keywordsRemaining: 0,
+            postStepsFailed: failed,
           }).then(r => console.log('Discord:', r.ok ? 'OK' : r.reason || r.status));
           "
 
@@ -151,14 +170,7 @@ jobs:
         if: failure()
         run: |
           node -e "
-          const {notifyAlert} = require('./scripts/notify.js');
+          const { notifyAlert } = require('./scripts/notify.js');
           notifyAlert('Pipeline FALLÓ en GitHub Actions\n\nRevisa los logs: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}', 'critical')
             .then(r => console.log('Alert:', r.ok ? 'OK' : r.reason));
           "
-
-      - name: Always shred .env at end
-        if: always()
-        run: |
-          if [ -f .env ]; then
-            shred -u .env 2>/dev/null || rm -f .env
-          fi

@@ -21,41 +21,21 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Setup Node.js 20
-        uses: actions/setup-node@v4
+      - name: Setup AIPickd environment
+        uses: ./.github/actions/setup-env
         with:
-          node-version: "20"
-          cache: "npm"
-
-      - name: Install dependencies
-        run: npm ci --no-audit --no-fund --ignore-scripts
-
-      - name: Reconstruct .env
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          WP_USERNAME: ${{ secrets.WP_USERNAME }}
-          WP_ADMIN_PASSWORD: ${{ secrets.WP_ADMIN_PASSWORD }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          DISCORD_WEBHOOK_ALERTAS: ${{ secrets.DISCORD_WEBHOOK_ALERTAS }}
-          DISCORD_WEBHOOK_PIPELINE: ${{ secrets.DISCORD_WEBHOOK_PIPELINE }}
-          DISCORD_WEBHOOK_REPORTES: ${{ secrets.DISCORD_WEBHOOK_REPORTES }}
-        run: |
-          umask 077
-          {
-            echo "SUPABASE_URL=\"${SUPABASE_URL}\""
-            echo "SUPABASE_SERVICE_ROLE_KEY=\"${SUPABASE_SERVICE_ROLE_KEY}\""
-            echo "WP_USERNAME=\"${WP_USERNAME}\""
-            echo "WP_ADMIN_PASSWORD=\"${WP_ADMIN_PASSWORD}\""
-            echo "OPENAI_API_KEY=\"${OPENAI_API_KEY}\""
-            echo "DISCORD_WEBHOOK_URL=\"${DISCORD_WEBHOOK_URL}\""
-            echo "DISCORD_WEBHOOK_ALERTAS=\"${DISCORD_WEBHOOK_ALERTAS}\""
-            echo "DISCORD_WEBHOOK_PIPELINE=\"${DISCORD_WEBHOOK_PIPELINE}\""
-            echo "DISCORD_WEBHOOK_REPORTES=\"${DISCORD_WEBHOOK_REPORTES}\""
-          } > .env
+          supabase-url: ${{ secrets.SUPABASE_URL }}
+          supabase-service-role-key: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          wp-username: ${{ secrets.WP_USERNAME }}
+          wp-admin-password: ${{ secrets.WP_ADMIN_PASSWORD }}
+          discord-webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          discord-webhook-alertas: ${{ secrets.DISCORD_WEBHOOK_ALERTAS }}
+          discord-webhook-pipeline: ${{ secrets.DISCORD_WEBHOOK_PIPELINE }}
 
       - name: Generate weekly report + send to Discord
+        env:
+          DISCORD_WEBHOOK_REPORTES: ${{ secrets.DISCORD_WEBHOOK_REPORTES }}
         run: node scripts/weekly-report.js
 
       - name: Run topic cluster analysis
@@ -69,7 +49,3 @@ jobs:
       - name: Apply seasonal keyword boosts
         run: node scripts/seasonal-boost.js --apply
         continue-on-error: true
-
-      - name: Always shred .env
-        if: always()
-        run: rm -f .env

@@ -42,3 +42,7 @@ docs/email-templates-afiliados.md
 docs/setup-google-search-console.md
 MIGRACION-NUBE.md
 POWER-UP-SUMMARY.md
+
+# Local actionlint binary (not part of repo)
+actionlint
+node_modules/

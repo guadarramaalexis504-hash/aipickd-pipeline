@@ -1,17 +1,8 @@
 -- ============================================
--- AIPickd — Supabase Schema (SNAPSHOT)
+-- AIPickd — Supabase Schema
 -- ============================================
--- This file is a snapshot of the cumulative schema produced by all
--- migrations under supabase/migrations/. It is convenient for a
--- one-shot bootstrap on a fresh project.
---
--- For ongoing changes, ALWAYS add a new file under
--- supabase/migrations/<UTC_TIMESTAMP>_<description>.sql and let the
--- migration-check workflow validate it. Then regenerate this snapshot
--- (manually or via `supabase db dump --schema public > supabase/schema.sql`).
---
--- Bootstrap usage: paste into Supabase SQL Editor (Project > SQL Editor
--- > New Query > paste > Run).
+-- Ejecuta este archivo en Supabase SQL Editor
+-- (Project > SQL Editor > New Query > paste > Run)
 -- ============================================
 
 -- Extensiones útiles

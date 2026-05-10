@@ -22,13 +22,10 @@
 const fs = require("fs");
 const path = require("path");
 const { notify, notifyArticle, notifyPipeline, notifyAlert, calcQualityScore } = require("./notify.js");
+const { loadEnv } = require("./lib/env");
+const { fetchWithRetry } = require("./lib/http");
 
-const envPath = path.join(__dirname, "..", ".env");
-const env = {};
-fs.readFileSync(envPath, "utf8").split("\n").forEach((line) => {
-  const m = line.match(/^([A-Z_]+)="?([^"\n]*)"?$/);
-  if (m) env[m[1]] = m[2];
-});
+const env = loadEnv();
 
 const {
   SUPABASE_URL,
@@ -51,16 +48,20 @@ const DO_PUBLISH = !args.includes("--no-pub");
 
 // --- helpers ---
 async function supa(method, endpoint, body) {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/${endpoint}`, {
-    method,
-    headers: {
-      apikey: SUPABASE_SERVICE_ROLE_KEY,
-      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-      "Content-Type": "application/json",
-      Prefer: "return=representation",
+  const res = await fetchWithRetry(
+    `${SUPABASE_URL}/rest/v1/${endpoint}`,
+    {
+      method,
+      headers: {
+        apikey: SUPABASE_SERVICE_ROLE_KEY,
+        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        "Content-Type": "application/json",
+        Prefer: "return=representation",
+      },
+      body: body ? JSON.stringify(body) : undefined,
     },
-    body: body ? JSON.stringify(body) : undefined,
-  });
+    { timeout: 30000, retries: 3 }
+  );
   const text = await res.text();
   if (!res.ok) throw new Error(`Supabase ${method} ${endpoint}: ${res.status} ${text}`);
   return text ? JSON.parse(text) : null;
