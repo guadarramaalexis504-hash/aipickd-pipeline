@@ -24,6 +24,7 @@ const path = require("path");
 const { notify, notifyArticle, notifyPipeline, notifyAlert, calcQualityScore } = require("./notify.js");
 const { loadEnv } = require("./lib/env");
 const { fetchWithRetry } = require("./lib/http");
+const { publishKey: idempotencyPublishKey } = require("./lib/idempotency");
 
 const env = loadEnv();
 
@@ -1117,6 +1118,32 @@ async function publishAllDrafts(maxCount = 10) {
 
       const catId = nicheCatMap[article.niche?.slug];
 
+      // Idempotency guard: a deterministic key (slug + UTC day + body hash)
+      // prevents republishing the same article when a previous run crashed
+      // mid-publish. If a row with this key already exists, mark this draft
+      // as already-published using the existing wp_post_id and skip POST.
+      const idempotencyKey = idempotencyPublishKey({
+        slug: article.slug,
+        body: html,
+      });
+      const existingByKey = await supa(
+        "GET",
+        `articles?idempotency_key=eq.${encodeURIComponent(idempotencyKey)}&select=id,wp_post_id,wp_url&limit=1`
+      ).catch(() => []);
+      if (Array.isArray(existingByKey) && existingByKey.length > 0 && existingByKey[0].wp_post_id) {
+        const dup = existingByKey[0];
+        console.log(`   ⏩ skip "${article.title.slice(0, 50)}": idempotent match (wp_post_id=${dup.wp_post_id})`);
+        await supa("PATCH", `articles?id=eq.${article.id}`, {
+          status: "published",
+          wp_post_id: dup.wp_post_id,
+          wp_url: dup.wp_url,
+          idempotency_key: idempotencyKey,
+          published_at: new Date().toISOString(),
+        }).catch(() => {});
+        published.push(article);
+        continue;
+      }
+
       // Guard: skip if a post with this slug already exists in WordPress
       const existingBySlug = await wp("GET", `posts?slug=${encodeURIComponent(article.slug)}&_fields=id,link`).catch(() => []);
       if (Array.isArray(existingBySlug) && existingBySlug.length > 0) {
@@ -1126,6 +1153,7 @@ async function publishAllDrafts(maxCount = 10) {
           status: "published",
           wp_post_id: existing.id,
           wp_url: existing.link,
+          idempotency_key: idempotencyKey,
           published_at: new Date().toISOString(),
         }).catch(() => {});
         published.push(article);
@@ -1166,6 +1194,7 @@ async function publishAllDrafts(maxCount = 10) {
         status: finalStatus,
         wp_post_id: wpPost.id,
         wp_url: wpPost.link,
+        idempotency_key: idempotencyKey,
         published_at: new Date().toISOString(),
         quality_score: calcQualityScore(article.word_count, []),
       });

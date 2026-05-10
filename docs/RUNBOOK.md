@@ -226,6 +226,81 @@ SELECT
 
 ---
 
+## 🔴 Circuit breaker tripped: `code: "CIRCUIT_OPEN"` in logs
+
+**Symptom:** logs show `Circuit 'supabase' is OPEN — fast-failing` or
+the same for `wordpress`.
+
+**What it means:** the breaker (in `scripts/lib/clients.js`) saw 5
+consecutive failures, opened the circuit for 60s, and is now refusing
+calls so we don't drown in retries.
+
+**Fix:**
+
+1. Identify the underlying outage — check Supabase status page or hit
+   `aipickd.com` in a browser.
+2. The breaker auto-tries again after 60s. One success closes it.
+3. If you need to reset it manually mid-process (rare):
+   ```js
+   require("./scripts/lib/clients").breakers.supabase.reset();
+   ```
+4. To trip it on demand (e.g. during a known maintenance window):
+   ```js
+   require("./scripts/lib/clients").breakers.wordpress.trip();
+   ```
+
+---
+
+## 🟡 DLQ has untriaged keywords (`failed_keywords` growing)
+
+**Symptom:** the daily report shows `untriagedCount > 5` in
+`failed_keywords`, or the table is growing without anyone clearing it.
+
+**Fix:**
+
+1. List recent untriaged entries:
+   ```js
+   const dlq = require("./scripts/lib/dlq");
+   await dlq.listUntriaged({ limit: 20 });
+   ```
+2. For each, decide: re-queue, give up, or fix root cause:
+   ```sql
+   -- Re-queue (resets attempts):
+   INSERT INTO keywords (keyword, niche_id, status, attempts)
+   SELECT keyword, niche_id, 'queued', 0
+   FROM failed_keywords WHERE id = '<uuid>';
+
+   UPDATE failed_keywords SET triaged = TRUE, triage_note = 'requeued'
+   WHERE id = '<uuid>';
+   ```
+3. Or just dismiss with a note:
+   ```js
+   await dlq.markTriaged("<uuid>", { note: "obsolete keyword" });
+   ```
+
+---
+
+## 🟡 Affiliate links expired or auto-swapped
+
+**Symptom:** Discord `#alertas` shows
+`🔗 Affiliate health check — N expired` after the weekly cron.
+
+**Fix:**
+
+1. Check the report for which brands. The detector ran with `--fix`,
+   so any with `replacement_url` were auto-swapped.
+2. For brands marked `expired` (no replacement was configured): pick a
+   new affiliate program, generate a tracking URL, then:
+   ```sql
+   UPDATE affiliates
+     SET base_url = '<new>', status = 'active', last_checked_at = NULL
+     WHERE brand = 'X';
+   ```
+3. Pre-emptively, set `replacement_url` on high-risk affiliates so the
+   detector swaps automatically next time it expires.
+
+---
+
 ## How to disable the pipeline temporarily
 
 1. Go to repo → Settings → Actions → General.

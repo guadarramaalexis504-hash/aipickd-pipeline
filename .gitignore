@@ -17,6 +17,7 @@ logs/
 dashboard.html
 .cache/
 tmp/
+dist/
 .outline-cache/
 RESUMEN-*.md
 backup/
