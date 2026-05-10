@@ -1,0 +1,34 @@
+name: Mark stale issues and PRs
+
+on:
+  schedule:
+    - cron: "0 6 * * *" # Daily at 06:00 UTC
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  stale:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/stale@v9
+        with:
+          days-before-stale: 30
+          days-before-close: 7
+          stale-issue-label: "stale"
+          stale-pr-label: "stale"
+          exempt-issue-labels: "pinned,security,blocked"
+          exempt-pr-labels: "pinned,security,blocked,dependencies"
+          stale-issue-message: |
+            This issue has had no activity for 30 days. It will be closed in
+            7 days unless someone removes the `stale` label or comments.
+          stale-pr-message: |
+            This PR has had no activity for 30 days. It will be closed in
+            7 days unless someone removes the `stale` label, pushes a
+            commit, or comments.
+          close-issue-message: "Closing due to inactivity. Reopen if still relevant."
+          close-pr-message: "Closing due to inactivity. Reopen if still relevant."
+          operations-per-run: 50

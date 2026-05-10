@@ -18,6 +18,14 @@ const DEFAULT_ENV_PATH = path.join(ROOT, ".env");
 
 let cache = null;
 
+/**
+ * Parses a .env file content string. Handles unquoted, single-quoted, and
+ * double-quoted values; double-quoted values support `\n`, `\r`, `\t`, `\"`,
+ * and `\\` escapes.
+ *
+ * @param {string} content
+ * @returns {Record<string, string>}
+ */
 function parseEnvFile(content) {
   const out = {};
   const lines = content.split(/\r?\n/);
@@ -54,6 +62,13 @@ function parseEnvFile(content) {
   return out;
 }
 
+/**
+ * Returns a Proxy that resolves keys from process.env first (preferred in CI)
+ * and falls back to the parsed .env file (preferred in local dev).
+ *
+ * @param {{ envPath?: string, refresh?: boolean }} [options]
+ * @returns {Record<string, string | undefined>}
+ */
 function loadEnv({ envPath = DEFAULT_ENV_PATH, refresh = false } = {}) {
   if (cache && !refresh) return cache;
 
@@ -84,6 +99,13 @@ function loadEnv({ envPath = DEFAULT_ENV_PATH, refresh = false } = {}) {
   return cache;
 }
 
+/**
+ * Asserts that all listed env vars are non-empty. Throws an Error with
+ * `code: "ENV_MISSING"` and `missing: string[]` if any are absent.
+ *
+ * @param {string[]} keys
+ * @returns {Record<string, string | undefined>}
+ */
 function require_(keys) {
   const env = loadEnv();
   const missing = [];

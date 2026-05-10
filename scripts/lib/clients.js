@@ -18,6 +18,16 @@ function getEnv() {
   return loadEnv();
 }
 
+/**
+ * Authenticated REST call to Supabase using the service-role key from env.
+ * Throws on non-2xx responses with the body included in the error message.
+ *
+ * @param {"GET" | "POST" | "PATCH" | "DELETE"} method
+ * @param {string} endpoint  Path under `/rest/v1/`, e.g. `articles?select=id`.
+ * @param {unknown} [body]   Auto-JSON-stringified.
+ * @param {{ prefer?: string, timeout?: number, retries?: number }} [opts]
+ * @returns {Promise<unknown>}
+ */
 async function supa(method, endpoint, body, opts = {}) {
   const env = getEnv();
   if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
@@ -44,6 +54,16 @@ async function supa(method, endpoint, body, opts = {}) {
   return text ? JSON.parse(text) : null;
 }
 
+/**
+ * Authenticated REST call to WordPress using basic auth (Application Password).
+ * Sends a real-browser User-Agent to bypass Hostinger/LiteSpeed bot rate limits.
+ *
+ * @param {"GET" | "POST" | "PATCH" | "PUT" | "DELETE"} method
+ * @param {string} endpoint  Path under `/wp-json/wp/v2/`, e.g. `posts?per_page=10`.
+ * @param {unknown} [body]
+ * @param {{ timeout?: number, retries?: number }} [opts]
+ * @returns {Promise<unknown>}
+ */
 async function wp(method, endpoint, body, opts = {}) {
   const env = getEnv();
   if (!env.WP_USERNAME || !env.WP_ADMIN_PASSWORD) {
