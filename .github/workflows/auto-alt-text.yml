@@ -1,0 +1,49 @@
+name: Auto Alt-Text Generator
+
+on:
+  schedule:
+    # Every Wednesday 04:00 UTC — out of the way of generation.
+    - cron: "0 4 * * 3"
+  workflow_dispatch:
+    inputs:
+      fix:
+        description: "Apply updates (otherwise dry-run)"
+        required: false
+        default: "true"
+        type: choice
+        options: ["true", "false"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aipickd-alt-text
+  cancel-in-progress: true
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup AIPickd environment
+        uses: ./.github/actions/setup-env
+        with:
+          supabase-url: ${{ secrets.SUPABASE_URL }}
+          supabase-service-role-key: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          wp-username: ${{ secrets.WP_USERNAME }}
+          wp-admin-password: ${{ secrets.WP_ADMIN_PASSWORD }}
+          discord-webhook-alertas: ${{ secrets.DISCORD_WEBHOOK_ALERTAS }}
+
+      - name: Run auto alt-text
+        run: |
+          if [ "${{ github.event.inputs.fix || 'true' }}" = "true" ]; then
+            node scripts/auto-alt-text.js --fix
+          else
+            node scripts/auto-alt-text.js
+          fi

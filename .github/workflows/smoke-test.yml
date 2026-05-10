@@ -1,0 +1,49 @@
+name: Smoke Test (post-deploy)
+
+on:
+  workflow_run:
+    workflows: ["AIPickd Auto-Generation"]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Verify aipickd.com responds with 200 + has <article>
+        env:
+          DISCORD_WEBHOOK_ALERTAS: ${{ secrets.DISCORD_WEBHOOK_ALERTAS }}
+        run: |
+          set -e
+          URL="https://aipickd.com/"
+          status=$(curl -fsS -o body.html -w "%{http_code}" -A "Mozilla/5.0 AIPickd-SmokeTest" "$URL" || true)
+          if [ "$status" != "200" ]; then
+            echo "❌ ${URL} returned ${status}"
+            if [ -n "$DISCORD_WEBHOOK_ALERTAS" ]; then
+              curl -sS -H "Content-Type: application/json" -X POST \
+                -d "{\"content\":\"🔴 Smoke test post-pipeline FALLÓ — aipickd.com devolvió HTTP ${status}\"}" \
+                "$DISCORD_WEBHOOK_ALERTAS" || true
+            fi
+            exit 1
+          fi
+          if ! grep -qi "<article" body.html; then
+            echo "❌ ${URL} 200 but no <article> tag in body"
+            head -c 500 body.html
+            if [ -n "$DISCORD_WEBHOOK_ALERTAS" ]; then
+              curl -sS -H "Content-Type: application/json" -X POST \
+                -d "{\"content\":\"⚠️ Smoke test: aipickd.com 200 OK pero no se encontró <article>\"}" \
+                "$DISCORD_WEBHOOK_ALERTAS" || true
+            fi
+            exit 1
+          fi
+          echo "✅ ${URL} 200 OK + <article> present"

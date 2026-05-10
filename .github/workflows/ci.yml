@@ -78,6 +78,33 @@ jobs:
       - run: npm ci --no-audit --no-fund --ignore-scripts || npm install --no-audit --no-fund --ignore-scripts
       - run: npm test
 
+  coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+      - run: npm ci --no-audit --no-fund --ignore-scripts || npm install --no-audit --no-fund --ignore-scripts
+      - name: Run tests with coverage
+        run: |
+          set -o pipefail
+          npm run test:coverage 2>&1 | tee coverage.out
+      - name: Surface coverage % in the job summary
+        if: always()
+        run: |
+          {
+            echo "## Coverage"
+            echo ""
+            echo '```'
+            grep -E '^# (start|end) of coverage|^# (line|branch|function) coverage|all files' coverage.out || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
   actionlint:
     runs-on: ubuntu-latest
     timeout-minutes: 5
