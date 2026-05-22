@@ -21,11 +21,12 @@ const fs = require('fs');
 const path = require('path');
 
 const envPath = path.join(__dirname, '..', '.env');
-const env = {};
+// Start with process.env so GitHub Actions secrets work without a .env file
+const env = { ...process.env };
 try {
   fs.readFileSync(envPath, 'utf8').split('\n').forEach((line) => {
     const m = line.match(/^([A-Z0-9_]+)="?([^"\n]*)"?$/);
-    if (m) env[m[1]] = m[2];
+    if (m) env[m[1]] = m[2]; // local .env overrides when present
   });
 } catch {}
 
