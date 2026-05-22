@@ -174,3 +174,14 @@ jobs:
           notifyAlert('Pipeline FALLÓ en GitHub Actions\n\nRevisa los logs: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}', 'critical')
             .then(r => console.log('Alert:', r.ok ? 'OK' : r.reason));
           "
+
+      - name: Ping healthchecks.io heartbeat
+        if: always()
+        continue-on-error: true
+        run: |
+          node -e "
+          const { ping } = require('./scripts/lib/heartbeat');
+          const state = '${{ job.status }}' === 'success' ? 'success' : 'fail';
+          ping('GENERATE', { state, message: 'job.status=${{ job.status }}' })
+            .then(r => console.log('Heartbeat:', r.ok ? 'OK' : r.reason));
+          "
