@@ -48,7 +48,7 @@ const PLUGIN_PHP = `<?php
  * Plugin Name: AIPickd Sitemap Fix
  * Plugin URI:  https://aipickd.com
  * Description: Removes taxonomy and user providers from WordPress core sitemap to fix noindex/sitemap conflict in Google Search Console.
- * Version:     1.1.0
+ * Version:     1.2.0
  * Author:      AIPickd
  * License:     MIT
  */
@@ -66,6 +66,12 @@ add_filter( 'wp_sitemaps_add_provider', function( $provider, $name ) {
     }
     return $provider;
 }, 10, 2 );
+
+/**
+ * Enable WordPress Application Passwords (disabled by some hosts like Hostinger).
+ * Needed so API credentials can be used instead of the plain admin password.
+ */
+add_filter( 'wp_is_application_passwords_available', '__return_true' );
 
 /**
  * Purge LiteSpeed / hosting cache for sitemap URLs on activation and on each sitemap request.
@@ -422,7 +428,7 @@ async function activatePlugin(_pluginSlug) {
 
   if (existing) {
     if (existing.status === "active") {
-      const needsUpgrade = existing.version && existing.version < "1.1.0";
+      const needsUpgrade = existing.version && existing.version < "1.2.0";
       console.log(`   Plugin: ${existing.plugin} v${existing.version} — ${needsUpgrade ? "upgrading to v1.1.0" : "already up to date"}`);
       if (!needsUpgrade) {
         // Still purge cache to ensure sitemap is fresh
