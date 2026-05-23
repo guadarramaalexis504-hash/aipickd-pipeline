@@ -31,7 +31,8 @@ function isUrl(v, { protocol = "https:", host } = {}) {
 
 function isDiscordWebhook(v) {
   if (!v) return true;
-  return isUrl(v, { protocol: "https:" }) && /^https:\/\/(?:[a-z]+\.)?discord\.com\/api\/webhooks\//.test(v);
+  // Accept both discord.com (current) and discordapp.com (legacy — Discord redirects automatically)
+  return isUrl(v, { protocol: "https:" }) && /^https:\/\/(?:[a-z]+\.)?discord(?:app)?\.com\/api\/webhooks\//.test(v.trim());
 }
 
 function isWpAppPassword(v) {
@@ -58,8 +59,8 @@ const checks = [
   {
     key: "OPENAI_API_KEY",
     required: true,
-    validate: (v) => /^sk-(proj-)?[A-Za-z0-9_-]{20,}$/.test(v),
-    error: "must start with sk- (or sk-proj-)",
+    validate: (v) => /^sk-(proj-)?[A-Za-z0-9_-]{20,}$/.test(v.trim()),
+    error: "must start with sk- (or sk-proj-) with no extra text — check for trailing spaces/newlines in the secret",
   },
   {
     key: "WP_USERNAME",

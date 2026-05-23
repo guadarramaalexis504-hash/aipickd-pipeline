@@ -80,7 +80,9 @@ function loadEnv({ envPath = DEFAULT_ENV_PATH, refresh = false } = {}) {
       get(_t, key) {
         if (typeof key !== "string") return undefined;
         if (process.env[key] !== undefined && process.env[key] !== "") {
-          return process.env[key];
+          // Trim whitespace — GitHub Secrets sometimes include trailing newlines
+          // when copy-pasted from terminals or text editors
+          return process.env[key].trim();
         }
         return fileEnv[key];
       },
