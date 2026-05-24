@@ -507,6 +507,40 @@ STRICT RULES:
       finalText = await runExpansionPass(polishRes.text, postPolishWords, 2200);
     }
 
+    // ── Pass 3: FAQ injection if missing ──────────────────────────────────
+    // GPT-4o frequently omits the FAQ section despite prompt instructions.
+    // QA gate requires it for FAQPage schema, so we inject it programmatically.
+    if (!/^##\s+(?:FAQ|Frequently Asked Questions|Common Questions)/im.test(finalText) && Array.isArray(outline.faqs) && outline.faqs.length > 0) {
+      console.log(`   📝 FAQ missing — injecting ${outline.faqs.length} Q&A`);
+      try {
+        const faqRes = await gpt(
+          "gpt-4o-mini",
+          "You are a technical writer for AI tool reviews. Write FAQ answers in 2-3 clear sentences each, using 2026 framing. Output markdown only.",
+          `Write a FAQ section for an article about "${outline.primary_keyword || kw.keyword}". Answer these questions concisely:
+
+${outline.faqs.map((q, i) => `${i + 1}. ${q}`).join("\n")}
+
+Format EXACTLY like this:
+## FAQ
+
+### ${outline.faqs[0]}
+[2-3 sentence answer]
+
+### [next question]
+[2-3 sentence answer]
+
+(continue for all ${outline.faqs.length} questions)
+
+Rules: Start with "## FAQ" heading. Each question as "###" sub-heading. Each answer 2-3 sentences. No preamble or commentary.`,
+          1500
+        );
+        totalCost += estimateCost("gpt-4o-mini", faqRes.usage);
+        finalText = finalText.trim() + "\n\n" + faqRes.text.trim() + "\n";
+      } catch (e) {
+        console.log(`   ⚠️  FAQ injection failed: ${e.message.slice(0, 80)}`);
+      }
+    }
+
     // Affiliate links
     const affiliates = await supa("GET", "affiliates?status=eq.active");
     const tagRegex = /\[AFFILIATE:([^\]]+)\]([^\[]+)\[\/AFFILIATE\]/gi;
@@ -660,14 +694,20 @@ function qualityGate(article) {
   const h2Count = (md.match(/^##\s+/gm) || []).length;
   if (h2Count < 5) issues.push(`only ${h2Count} H2 headings (min 5)`);
 
-  // Keyword density: primary keyword must appear at least 3 times
+  // Keyword density: primary keyword must appear at least once, OR ≥70% of meaningful words present
+  // Long-tail keywords like "best ai tools for image enhancement 2026" rarely appear verbatim;
+  // word-fraction match is more forgiving while still catching off-topic content.
   if (article.primary_keyword) {
     const kw = article.primary_keyword.toLowerCase().trim();
     const bodyLower = md.toLowerCase();
-    // Escape regex special chars
     const kwEscaped = kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const kwCount = (bodyLower.match(new RegExp(kwEscaped, "g")) || []).length;
-    if (kwCount < 2) issues.push(`keyword "${kw}" only appears ${kwCount}× (min 2)`);
+    const exactCount = (bodyLower.match(new RegExp(kwEscaped, "g")) || []).length;
+    const meaningfulWords = kw.split(/\s+/).filter((w) => w.length >= 4);
+    const matchedWords = meaningfulWords.filter((w) => bodyLower.includes(w));
+    const wordCoverage = meaningfulWords.length > 0 ? matchedWords.length / meaningfulWords.length : 1;
+    if (exactCount < 1 && wordCoverage < 0.7) {
+      issues.push(`keyword "${kw}" never appears verbatim and only ${Math.round(wordCoverage * 100)}% of words present (min 70%)`);
+    }
   }
 
   // FAQ section check — needed for FAQPage schema
