@@ -17,17 +17,8 @@
  *   node scripts/internal-links.js --dry-run    # reporta sin modificar WP
  */
 
-const fs   = require('fs');
-const path = require('path');
-
-const envPath = path.join(__dirname, '..', '.env');
-const env = {};
-try {
-  fs.readFileSync(envPath, 'utf8').split('\n').forEach(line => {
-    const m = line.match(/^([A-Z0-9_]+)="?([^"\n]*)"?$/);
-    if (m) env[m[1]] = m[2];
-  });
-} catch {}
+const { loadEnv } = require('./lib/env');
+const env = loadEnv();
 
 const args     = process.argv.slice(2);
 const DRY_RUN  = args.includes('--dry-run');

@@ -22,23 +22,8 @@
 
 "use strict";
 
-const fs   = require("fs");
-const path = require("path");
-
-// ─────────────────────────────────────────────
-// Load .env
-// ─────────────────────────────────────────────
-const envPath = path.join(__dirname, "..", ".env");
-const env = {};
-try {
-  fs.readFileSync(envPath, "utf8").split("\n").forEach((line) => {
-    const m = line.match(/^([A-Z0-9_]+)="?([^"\n]*)"?$/);
-    if (m) env[m[1]] = m[2];
-  });
-} catch (e) {
-  console.error("ERROR: could not read .env:", e.message);
-  process.exit(1);
-}
+const { loadEnv } = require("./lib/env");
+const env = loadEnv();
 
 const {
   SUPABASE_URL,

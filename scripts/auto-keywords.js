@@ -19,17 +19,8 @@
  *   node scripts/auto-keywords.js --count 30 # generate exactly 30
  */
 
-const fs   = require('fs');
-const path = require('path');
-
-const envPath = path.join(__dirname, '..', '.env');
-const env = {};
-try {
-  fs.readFileSync(envPath, 'utf8').split('\n').forEach(line => {
-    const m = line.match(/^([A-Z0-9_]+)="?([^"\n]*)"?$/);
-    if (m) env[m[1]] = m[2];
-  });
-} catch {}
+const { loadEnv } = require('./lib/env');
+const env = loadEnv();
 
 const QUEUE_LOW_THRESHOLD = parseInt(process.env.QUEUE_LOW_THRESHOLD || '50');
 const args = process.argv.slice(2);
