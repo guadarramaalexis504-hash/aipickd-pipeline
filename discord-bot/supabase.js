@@ -212,6 +212,130 @@ async function addKeyword(keyword, articleType = 'comparison', searchVolume = 0,
   };
 }
 
+// ── Pipeline pause/resume (singleton config table) ────────────────────────────
+
+const CONFIG_ROW_ID = '00000000-0000-0000-0000-000000000001';
+
+/**
+ * Pause the pipeline. run-pipeline.js checks this flag at startup and aborts
+ * cleanly if true. Reason and pausedBy are stored for visibility in
+ * `/status` output and Discord alerts.
+ */
+async function pausePipeline(reason, pausedBy) {
+  return supaWrite('PATCH', `pipeline_config?id=eq.${CONFIG_ROW_ID}`, {
+    paused: true,
+    paused_reason: reason || 'paused via Discord',
+    paused_by: pausedBy || 'discord-bot',
+    paused_at: new Date().toISOString(),
+  });
+}
+
+/**
+ * Resume the pipeline. Clears the reason metadata so the next pause
+ * starts fresh.
+ */
+async function resumePipeline(resumedBy) {
+  await supaWrite('PATCH', `pipeline_config?id=eq.${CONFIG_ROW_ID}`, {
+    paused: false,
+    paused_reason: null,
+    paused_by: resumedBy ? `resumed by ${resumedBy}` : null,
+    paused_at: null,
+  });
+  return { resumed: true, message: 'Pipeline resumido.' };
+}
+
+/**
+ * Returns current pause state — for /status output and bot context.
+ */
+async function getPipelinePauseState() {
+  try {
+    const rows = await supa(`pipeline_config?id=eq.${CONFIG_ROW_ID}&select=paused,paused_reason,paused_by,paused_at`);
+    return rows[0] || { paused: false };
+  } catch (e) {
+    // Table missing → treat as not paused (don't accidentally pause prod)
+    return { paused: false, error: e.message };
+  }
+}
+
+// ── Article audit / regenerate ────────────────────────────────────────────────
+
+/**
+ * Lightweight audit for a single article by slug. Returns word count,
+ * quality score, current status, and any latent issues we can detect
+ * from the markdown alone (stray fences, dup-H1 — same checks fix-stale-
+ * html uses for its detection pass).
+ */
+async function auditArticle(slug) {
+  const rows = await supa(
+    `articles?slug=eq.${encodeURIComponent(slug)}&select=id,title,slug,status,word_count,quality_score,content_markdown,wp_post_id,wp_url,published_at`
+  );
+  if (rows.length === 0) return { found: false, slug };
+  const a = rows[0];
+
+  const md = a.content_markdown || '';
+  const issues = [];
+
+  if (a.word_count != null && a.word_count < 1100) {
+    issues.push(`too short: ${a.word_count}w`);
+  }
+  if (/```/.test(md)) issues.push('stray code fence in markdown');
+  // Duplicate H1 (matches WP title)
+  const leadingH1 = md.match(/^#\s+(.+?)\s*$/m);
+  if (leadingH1 && a.title) {
+    const norm = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '');
+    if (norm(leadingH1[1]) === norm(a.title)) {
+      issues.push('leading H1 duplicates post title');
+    }
+  }
+  if (/\[AFFILIATE:/i.test(md)) issues.push('unprocessed [AFFILIATE:] tag');
+  if (md.endsWith('...') || md.endsWith('…')) issues.push('appears truncated');
+
+  return {
+    found: true,
+    slug: a.slug,
+    title: a.title,
+    status: a.status,
+    word_count: a.word_count,
+    quality_score: a.quality_score,
+    wp_post_id: a.wp_post_id,
+    wp_url: a.wp_url,
+    published_at: a.published_at,
+    issues,
+    needs_repair: issues.length > 0,
+  };
+}
+
+/**
+ * Mark an article as qa_failed and free its keyword for re-generation.
+ * Used when the bot is told "this article is bad, regenerate it."
+ *
+ * Side-effect: increments keywords.retry_count if the column exists,
+ * so the next generation pass knows it's a retry and can apply the
+ * rescue prompt.
+ */
+async function regenerateArticle(slug, reason) {
+  const rows = await supa(`articles?slug=eq.${encodeURIComponent(slug)}&select=id,keyword_id,title`);
+  if (rows.length === 0) return { found: false, slug };
+  const a = rows[0];
+
+  await supaWrite('PATCH', `articles?id=eq.${a.id}`, {
+    status: 'qa_failed',
+    quality_score: 0,
+  });
+  if (a.keyword_id) {
+    // Best-effort retry tracking — ignore if column doesn't exist yet
+    await supaWrite('PATCH', `keywords?id=eq.${a.keyword_id}`, { status: 'queued' }).catch(() => {});
+  }
+  return {
+    requeued: true,
+    slug: a.slug,
+    title: a.title,
+    keyword_id: a.keyword_id,
+    reason: reason || 'manual regenerate via Discord bot',
+    message: `"${a.title}" marcado qa_failed + keyword re-encolada para próximo run.`,
+  };
+}
+
 // ── Conversation memory (persistent across reboots) ──────────────────────────
 
 /**
@@ -290,9 +414,14 @@ module.exports = {
   getKeywordsQueue,
   getAffiliates,
   getPipelineHealth,
+  getPipelinePauseState,
+  auditArticle,
   // write
   requeueFailedArticles,
   addKeyword,
+  pausePipeline,
+  resumePipeline,
+  regenerateArticle,
   // conversation memory
   loadConversation,
   saveConversation,

@@ -1585,6 +1585,37 @@ function startSoftTimeoutWarning(label = "pipeline") {
   console.log(`          Generate ${GEN_COUNT}, Publish=${DO_PUBLISH}`);
   console.log("══════════════════════════════════════════════════════\n");
 
+  // ── Pause-flag check ──────────────────────────────────────────────────
+  // The Discord bot can flip pipeline_config.paused to TRUE when debugging.
+  // If we're paused, abort BEFORE touching keywords/articles so partial
+  // state can't leak. Table missing → treat as not paused (don't
+  // accidentally block prod if migration hasn't run yet).
+  try {
+    const cfgRows = await supa(
+      "GET",
+      "pipeline_config?id=eq.00000000-0000-0000-0000-000000000001&select=paused,paused_reason,paused_by,paused_at"
+    );
+    const cfg = Array.isArray(cfgRows) && cfgRows.length > 0 ? cfgRows[0] : null;
+    if (cfg && cfg.paused === true) {
+      const reason = cfg.paused_reason || "(no reason given)";
+      const by = cfg.paused_by || "(unknown)";
+      const since = cfg.paused_at ? ` since ${cfg.paused_at}` : "";
+      console.log(`⏸  Pipeline paused${since} by ${by}: ${reason}`);
+      console.log("    Skipping this run. Resume via Discord bot or directly in Supabase.");
+      // Notify so we don't silently no-op forever
+      await notifyAlert(
+        `⏸ Pipeline paused${since} by **${by}**\nReason: ${reason}\n\nThis run skipped generation + publish. Use \`resume_pipeline\` from the bot when ready.`,
+        "info"
+      ).catch(() => {});
+      process.exit(0);
+    }
+  } catch (e) {
+    // Table might not exist yet (migration pending). Don't block prod on it.
+    if (!/PGRST205|relation .* does not exist/i.test(e.message)) {
+      console.log(`   ⚠️  pause-flag check failed (continuing anyway): ${e.message.slice(0, 120)}`);
+    }
+  }
+
   // Schedule the soft warning. Only meaningful in CI (where a 45-min timeout
   // is enforced); harmless locally.
   startSoftTimeoutWarning("generate.yml");
