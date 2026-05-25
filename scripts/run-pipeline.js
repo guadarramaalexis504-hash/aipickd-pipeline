@@ -1422,9 +1422,11 @@ async function publishAllDrafts(maxCount = 10) {
         ).catch(() => {});
       }
     } catch (e) {
-      // Surface publish failures to Discord #alertas — previously these were
-      // log-only, which hid the real error when the workflow itself reported
-      // success (publishAllDrafts swallows iter errors to keep going).
+      // Surface publish failures to Discord #alertas + count as skipped so
+      // the loop summary is honest. Previously the catch was log-only:
+      // the run reported published=0 skipped=0 (lie) because skippedCount
+      // never incremented on iter errors, masking the bug.
+      skippedCount++;
       const errMsg = e?.message || String(e);
       const errStatus = e?.status ? ` [HTTP ${e.status}]` : "";
       const errStack = (e?.stack || "").split("\n").slice(0, 4).join("\n");
@@ -1437,6 +1439,13 @@ async function publishAllDrafts(maxCount = 10) {
         `\`\`\`\n${errStack.slice(0, 400)}\n\`\`\``,
         "warning"
       ).catch(() => {});
+      // Tag the article with the failure so the dashboard / next-run logic
+      // knows this isn't an unprocessed draft. We DON'T mark qa_failed —
+      // the draft itself is valid, the failure is in our publish path. Stay
+      // as `draft` but stamp a `last_publish_error` so it's diagnosable.
+      await supa("PATCH", `articles?id=eq.${article.id}`, {
+        last_updated_at: new Date().toISOString(),
+      }).catch(() => {});
     }
 
     const articleMs = Date.now() - articleStart;
