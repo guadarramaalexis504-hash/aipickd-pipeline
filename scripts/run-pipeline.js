@@ -1349,7 +1349,21 @@ async function publishAllDrafts(maxCount = 10) {
         ).catch(() => {});
       }
     } catch (e) {
-      console.log(`   ✗ Failed for ${article.title}: ${e.message.slice(0, 100)}`);
+      // Surface publish failures to Discord #alertas — previously these were
+      // log-only, which hid the real error when the workflow itself reported
+      // success (publishAllDrafts swallows iter errors to keep going).
+      const errMsg = e?.message || String(e);
+      const errStatus = e?.status ? ` [HTTP ${e.status}]` : "";
+      const errStack = (e?.stack || "").split("\n").slice(0, 4).join("\n");
+      console.log(`${ts()} ✗ Failed for ${article.title}: ${errMsg.slice(0, 200)}${errStatus}`);
+      console.log(`     stack: ${errStack}`);
+      notifyAlert(
+        `🚫 **Publish failed:** ${article.title?.slice(0, 80)}\n` +
+        `**Error${errStatus}:** \`${errMsg.slice(0, 300)}\`\n` +
+        `**Article ID:** \`${article.id}\` · **Slug:** \`${article.slug}\`\n` +
+        `\`\`\`\n${errStack.slice(0, 400)}\n\`\`\``,
+        "warning"
+      ).catch(() => {});
     }
 
     const articleMs = Date.now() - articleStart;
