@@ -212,6 +212,76 @@ async function addKeyword(keyword, articleType = 'comparison', searchVolume = 0,
   };
 }
 
+// ── Conversation memory (persistent across reboots) ──────────────────────────
+
+/**
+ * Load conversation history for a channel.
+ * Returns empty array if no history exists yet (not an error).
+ * The shape matches what the Anthropic SDK expects: [{role, content}].
+ */
+async function loadConversation(channelId) {
+  try {
+    const rows = await supa(
+      `bot_conversations?channel_id=eq.${encodeURIComponent(channelId)}&select=messages`
+    );
+    return Array.isArray(rows) && rows.length > 0 ? rows[0].messages || [] : [];
+  } catch (e) {
+    // Table missing or other read error → fall back to empty (don't break the bot)
+    console.error('[supabase:loadConversation]', e.message);
+    return [];
+  }
+}
+
+/**
+ * Save (upsert) conversation history for a channel.
+ * Fire-and-forget — failures are logged but don't block the bot reply.
+ */
+async function saveConversation(channelId, messages) {
+  try {
+    const r = await fetch(
+      `${SUPA_URL}/rest/v1/bot_conversations?on_conflict=channel_id`,
+      {
+        method: 'POST',
+        headers: {
+          apikey: SUPA_KEY,
+          Authorization: `Bearer ${SUPA_KEY}`,
+          'Content-Type': 'application/json',
+          Prefer: 'resolution=merge-duplicates,return=minimal',
+        },
+        body: JSON.stringify({ channel_id: channelId, messages }),
+      }
+    );
+    if (!r.ok) {
+      console.error('[supabase:saveConversation]', r.status, (await r.text()).slice(0, 200));
+    }
+  } catch (e) {
+    console.error('[supabase:saveConversation]', e.message);
+  }
+}
+
+/**
+ * Drop conversation history for a channel (e.g. /reset slash command).
+ */
+async function clearConversation(channelId) {
+  try {
+    const r = await fetch(
+      `${SUPA_URL}/rest/v1/bot_conversations?channel_id=eq.${encodeURIComponent(channelId)}`,
+      {
+        method: 'DELETE',
+        headers: {
+          apikey: SUPA_KEY,
+          Authorization: `Bearer ${SUPA_KEY}`,
+          Prefer: 'return=minimal',
+        },
+      }
+    );
+    return r.ok;
+  } catch (e) {
+    console.error('[supabase:clearConversation]', e.message);
+    return false;
+  }
+}
+
 module.exports = {
   // read
   getStats,
@@ -223,4 +293,8 @@ module.exports = {
   // write
   requeueFailedArticles,
   addKeyword,
+  // conversation memory
+  loadConversation,
+  saveConversation,
+  clearConversation,
 };
