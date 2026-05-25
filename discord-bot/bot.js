@@ -43,9 +43,12 @@ const {
   clearConversation,
 } = require('./supabase');
 const { triggerPipelineRun, getLatestRuns, dispatchWorkflow } = require('./github');
+const { registerSlashCommands, formatResult } = require('./slash-commands');
 
 // ── Config ────────────────────────────────────────────────────────────────────
 const DISCORD_TOKEN   = process.env.DISCORD_BOT_TOKEN;
+const DISCORD_CLIENT_ID = process.env.DISCORD_CLIENT_ID; // for slash command registration
+const DISCORD_GUILD_ID  = process.env.DISCORD_GUILD_ID;  // optional, dev-mode faster
 const ANTHROPIC_KEY   = process.env.ANTHROPIC_API_KEY;
 const MODEL           = process.env.ANTHROPIC_MODEL || 'claude-opus-4-5';
 const MAX_HISTORY     = 20;   // mensajes por canal que recuerda
@@ -454,11 +457,88 @@ async function sendChunked(channel, text, replyTo) {
   }
 }
 
+// ── Slash command handler ─────────────────────────────────────────────────────
+// Slash commands bypass the Claude LLM call for routine ops — instant + free.
+// Each command maps to a tool function (or a small handler when special
+// formatting is needed). Errors are caught and surfaced as ephemeral replies
+// so a broken command doesn't spam the channel.
+async function handleSlashCommand(interaction) {
+  // ALL slash replies are ephemeral by default (only the invoker sees them).
+  // This keeps `#general` clean when Alexis runs `/status` mid-conversation.
+  await interaction.deferReply({ ephemeral: true });
+
+  const name = interaction.commandName;
+  const opts = interaction.options;
+  try {
+    let result;
+    switch (name) {
+      case 'status':
+        result = await getPipelineHealth();
+        break;
+      case 'audit':
+        result = await runTool('audit_article', { slug: opts.getString('slug') });
+        break;
+      case 'republish':
+        result = await runTool('republish_article', { slug: opts.getString('slug') });
+        break;
+      case 'generate':
+        result = await runTool('trigger_pipeline', { gen_count: opts.getInteger('count') || 1 });
+        break;
+      case 'pause':
+        result = await runTool('pause_pipeline', {
+          reason: opts.getString('reason'),
+          paused_by: interaction.user.username,
+        });
+        break;
+      case 'resume':
+        result = await runTool('resume_pipeline', { resumed_by: interaction.user.username });
+        break;
+      case 'cost':
+        result = await getMonthlyCost();
+        break;
+      case 'articles':
+        result = await getRecentArticles(opts.getInteger('count') || 5);
+        break;
+      case 'runs':
+        result = await getLatestRuns();
+        break;
+      case 'reset':
+        await clearConversation(interaction.channelId);
+        history.delete(interaction.channelId);
+        historyLoaded.delete(interaction.channelId);
+        result = '🧹 Memoria del canal borrada. Próximo mensaje empieza fresco.';
+        break;
+      default:
+        result = `Comando desconocido: /${name}`;
+    }
+    await interaction.editReply(formatResult(result));
+  } catch (e) {
+    console.error(`[slash:/${name}]`, e.message);
+    await interaction.editReply(`❌ Error en /${name}: \`${e.message.slice(0, 300)}\``);
+  }
+}
+
 // ── Eventos de Discord ────────────────────────────────────────────────────────
-discord.once(Events.ClientReady, (c) => {
+discord.once(Events.ClientReady, async (c) => {
   console.log(`✅ AIPickd Bot conectado como ${c.user.tag}`);
   console.log(`   Servidor(es): ${c.guilds.cache.map((g) => g.name).join(', ')}`);
-  console.log(`   Herramientas: ${TOOLS.length} (${TOOLS.filter((t) => ['requeue_failed_articles', 'trigger_pipeline', 'add_keyword'].includes(t.name)).length} de acción)`);
+  console.log(`   Herramientas: ${TOOLS.length} (${TOOLS.filter((t) => ['requeue_failed_articles', 'trigger_pipeline', 'add_keyword', 'pause_pipeline', 'resume_pipeline', 'regenerate_article', 'republish_article', 'dispatch_workflow'].includes(t.name)).length} de acción)`);
+  try {
+    const reg = await registerSlashCommands(DISCORD_TOKEN, DISCORD_CLIENT_ID, DISCORD_GUILD_ID);
+    if (reg.skipped) {
+      console.log(`   Slash commands: SKIPPED (DISCORD_CLIENT_ID not set)`);
+    } else {
+      console.log(`   Slash commands: ${reg.registered} registered (${reg.scope})`);
+      console.log(`     ${reg.commands.join(' · ')}`);
+    }
+  } catch (e) {
+    console.error(`   Slash command registration failed: ${e.message}`);
+  }
+});
+
+discord.on(Events.InteractionCreate, async (interaction) => {
+  if (!interaction.isChatInputCommand()) return;
+  await handleSlashCommand(interaction);
 });
 
 discord.on(Events.MessageCreate, async (message) => {
