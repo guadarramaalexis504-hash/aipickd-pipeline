@@ -1097,6 +1097,28 @@ async function publishAllDrafts(maxCount = 10) {
 
   trace(`▶ publishAllDrafts(maxCount=${maxCount}) start`);
 
+  // Auto-archive drafts older than 7 days that never got a wp_post_id.
+  // These have been retried many times and are clogging the queue. Mirrors
+  // the qa_failed archive logic that already runs at the end of main().
+  try {
+    const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString();
+    const archived = await supa(
+      "PATCH",
+      `articles?status=eq.draft&wp_post_id=is.null&created_at=lt.${sevenDaysAgo}`,
+      { status: "archived" }
+    );
+    const archivedCount = Array.isArray(archived) ? archived.length : 0;
+    if (archivedCount > 0) {
+      trace(`🗄️  auto-archived ${archivedCount} draft(s) older than 7 days (stuck without wp_post_id)`);
+      notifyAlert(
+        `🗄️ **Auto-archived ${archivedCount} stuck draft(s)** (>7 days old, never published to WP). Cleared from publish queue.`,
+        "info"
+      ).catch(() => {});
+    }
+  } catch (e) {
+    trace(`⚠️ auto-archive query failed: ${e.message?.slice(0, 120)}`);
+  }
+
   // Only fetch articles that haven't been pushed to WP yet
   let drafts;
   try {
@@ -1197,16 +1219,34 @@ async function publishAllDrafts(maxCount = 10) {
     const articleStart = Date.now();
     console.log(`${ts()} 📤 Publishing "${article.title?.slice(0, 60)}"`);
 
-    // Duplicate detection — skip if very similar title already published
+    // Duplicate detection — skip if very similar title already published.
+    // Previously the threshold was "any 5-word phrase matches" which produced
+    // false positives like "best ai writing tools 2026" against any other
+    // "best * 2026" article. Tightened to 7 words AND require >= 0.6 jaccard
+    // word-set similarity to consider it a duplicate. Either alone isn't enough.
     const normNewTitle = normalizeTitle(article.title);
-    const isDuplicate = publishedTitles.some(existing => {
+    const newWords = new Set(normNewTitle.split(" ").filter((w) => w.length >= 3));
+    const isDuplicate = publishedTitles.some((existing) => {
+      // Cheap reject: very short titles can't be meaningful duplicates here
+      if (!existing || existing.length < 20) return false;
+      // Test 1: any 7-word consecutive phrase shared
       const words = normNewTitle.split(" ");
-      // Check if 5+ consecutive words match an existing title
-      for (let i = 0; i <= words.length - 5; i++) {
-        const phrase = words.slice(i, i + 5).join(" ");
-        if (phrase.length > 20 && existing.includes(phrase)) return true;
+      let phraseMatch = false;
+      for (let i = 0; i <= words.length - 7; i++) {
+        const phrase = words.slice(i, i + 7).join(" ");
+        if (phrase.length > 25 && existing.includes(phrase)) {
+          phraseMatch = true;
+          break;
+        }
       }
-      return false;
+      if (!phraseMatch) return false;
+      // Test 2: jaccard ≥ 0.6 over 3+ char word sets
+      const existingWords = new Set(existing.split(" ").filter((w) => w.length >= 3));
+      let inter = 0;
+      for (const w of newWords) if (existingWords.has(w)) inter++;
+      const union = newWords.size + existingWords.size - inter;
+      const jaccard = union === 0 ? 0 : inter / union;
+      return jaccard >= 0.6;
     });
     if (isDuplicate) {
       skippedCount++;

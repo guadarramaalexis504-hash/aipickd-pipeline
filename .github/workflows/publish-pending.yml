@@ -56,8 +56,11 @@ jobs:
           discord-webhook-pipeline: ${{ secrets.DISCORD_WEBHOOK_PIPELINE }}
           discord-webhook-alertas: ${{ secrets.DISCORD_WEBHOOK_ALERTAS }}
 
-      - name: Validate secrets
-        run: node scripts/validate-secrets.js
+      - name: Validate secrets (with WP auth probe)
+        # --probe also tries WP /users/me?context=edit so a rotated
+        # Application Password fails this step instead of silently
+        # breaking every publish iter.
+        run: node scripts/validate-secrets.js --probe
 
       - name: Publish pending drafts
         run: |

@@ -153,10 +153,41 @@ for (const c of checks) {
     }
     try {
       const r = await fetchWithRetry("https://aipickd.com/wp-json/", {}, { timeout: 10000, retries: 1 });
-      console.log(`  ${r.ok ? "✅" : "❌"} WordPress: ${r.status}`);
+      console.log(`  ${r.ok ? "✅" : "❌"} WordPress unauth: ${r.status}`);
       if (!r.ok) failed++;
     } catch (e) {
       console.error(`  ❌ WordPress probe: ${e.message}`);
+      failed++;
+    }
+
+    // Critical: probe the WP Application Password authentication. Regex
+    // alone can't tell us if the password was rotated, revoked, or never
+    // worked. /users/me?context=edit requires a logged-in user — if we
+    // get 401, the password is dead and every publish iter will fail
+    // silently in the catch. Better to fail fast at the workflow step.
+    try {
+      const auth = Buffer.from(`${env.WP_USERNAME}:${env.WP_ADMIN_PASSWORD}`).toString("base64");
+      const r = await fetchWithRetry(
+        "https://aipickd.com/wp-json/wp/v2/users/me?context=edit",
+        {
+          headers: {
+            Authorization: `Basic ${auth}`,
+            "User-Agent": "Mozilla/5.0 AIPickd-validate-secrets/1.0",
+            Accept: "application/json",
+          },
+        },
+        { timeout: 10000, retries: 1 }
+      );
+      if (r.ok) {
+        console.log(`  ✅ WordPress auth: ${r.status} (Application Password works)`);
+      } else {
+        const body = await r.text();
+        console.error(`  ❌ WordPress auth: ${r.status} — ${body.slice(0, 150)}`);
+        console.error(`     → Application Password may be rotated/revoked. Regenerate at /wp-admin/profile.php`);
+        failed++;
+      }
+    } catch (e) {
+      console.error(`  ❌ WordPress auth probe: ${e.message}`);
       failed++;
     }
   }

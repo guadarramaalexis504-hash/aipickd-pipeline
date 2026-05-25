@@ -1,0 +1,51 @@
+name: AIPickd Re-queue qa_failed (manual)
+
+# Recycles recent qa_failed articles back into the queue. Useful after a
+# prompt fix: instead of waiting for the next keyword discovery, you can
+# replay the last 24-72h of failures with the updated prompt in one go.
+
+on:
+  workflow_dispatch:
+    inputs:
+      hours:
+        description: "Look back this many hours"
+        required: false
+        default: "48"
+      go:
+        description: "Actually re-queue (default: dry-run)"
+        required: false
+        default: "false"
+        type: choice
+        options: ["false", "true"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aipickd-mutations
+  cancel-in-progress: false
+
+jobs:
+  requeue:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup AIPickd environment
+        uses: ./.github/actions/setup-env
+        with:
+          supabase-url: ${{ secrets.SUPABASE_URL }}
+          supabase-service-role-key: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          discord-webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
+
+      - name: Re-queue qa_failed articles
+        run: |
+          GO=""
+          if [ "${{ github.event.inputs.go }}" = "true" ]; then GO="--go"; fi
+          node scripts/requeue-qa-failed.js --hours "${{ github.event.inputs.hours || '48' }}" $GO
