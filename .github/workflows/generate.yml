@@ -93,6 +93,17 @@ jobs:
       # The article is already published. If sitemap ping fails, that's
       # recoverable. We track failures in step outputs and report them in
       # the final Discord notification — no false "PIPELINE FAILED" alarms.
+
+      # Recovery: if run-pipeline.js's publishAllDrafts silently no-ops
+      # (the bug we hit 2026-05-25), there will be drafts in Supabase that
+      # never reached WP. publish-pending-drafts.js is the simpler standalone
+      # publisher — preflight WP auth check, fewer GPT calls, hard timeouts.
+      # If the main publish path works fine, this is a no-op.
+      - name: Recovery — publish any pending drafts
+        id: post-publish-recovery
+        continue-on-error: true
+        run: node scripts/publish-pending-drafts.js --limit 5
+
       - name: Auto-refill keyword queue (if < 50 keywords)
         id: post-keywords
         continue-on-error: true

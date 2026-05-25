@@ -5,6 +5,48 @@ see (in Discord, in CI, on the site) → what it means → fix steps.
 
 ---
 
+## ⚡ Quick-look: is the pipeline healthy?
+
+```sh
+node scripts/pipeline-status.js
+```
+
+Single-shot snapshot: drafts pending, qa_failed, keyword statuses, hours
+since last publish, today's cost, plus flags ("📌 N drafts pending —
+publish path may be broken", "⏰ Nd since last publish — check cron").
+
+Use `--notify` to post to `#pipeline-status`, or `--json` to pipe.
+
+---
+
+## 🚨 Pipeline runs "success" but 0 articles published
+
+**Symptom:** `notifyPipeline` says success, drafts in Supabase don't
+shrink, `pipeline-status.js` shows 5+ drafts pending and `⏰ Nd since
+last publish`.
+
+**Triage:**
+
+1. Check `#alertas` channel — telemetry from `publishAllDrafts` fires
+   here (drafts count, WP categories count, "iter starting" summary).
+   If you see `🚨 publishAllDrafts mismatch! supa() returned 0 drafts
+   but raw fetch found N` → the `supa()` helper or `fetchWithRetry` is
+   corrupting the response. Stack trace points at the buggy line.
+2. Try the standalone publisher with WP auth pre-flight:
+   ```sh
+   # in GitHub Actions: Run workflow → publish-pending.yml
+   # locally (needs working WP_ADMIN_PASSWORD in .env):
+   node scripts/publish-pending-drafts.js --limit 1 --dry-run
+   ```
+   If pre-flight fails with 401, the **Application Password is
+   rotated/revoked**. Regenerate at `/wp-admin/profile.php → Application
+   Passwords` and update `WP_ADMIN_PASSWORD` in GitHub Secrets.
+3. The next `generate.yml` run auto-recovers via `Recovery — publish
+   any pending drafts` step. If that ALSO fails to publish, the bug is
+   not WP auth — see `#alertas` traces.
+
+---
+
 ## 🔴 Discord: "Pipeline FALLÓ en GitHub Actions"
 
 **Triage in 30 seconds:** open the run link in the alert, look at which

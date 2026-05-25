@@ -184,10 +184,38 @@ async function notifyArticle(title, url, wordCount = 0, affiliates = [], quality
 // ─────────────────────────────────────────────
 
 /** Alerta de error, anomalía, o evento crítico */
+// In-process dedup cache so we don't spam #alertas with N copies of the
+// same error from one pipeline run (e.g. when 6 drafts all fail with the
+// same WP auth error). Keyed by first 120 chars of the message; entries
+// expire after 60s, which is shorter than any single workflow run + long
+// enough that real repeats within a run get suppressed.
+const ALERT_DEDUP = new Map();
+const ALERT_DEDUP_WINDOW_MS = 60_000;
+
+function alertDedupKey(message, severity) {
+  return `${severity}|${String(message).replace(/\s+/g, ' ').slice(0, 120)}`;
+}
+
 async function notifyAlert(message, severity = 'warning') {
   const colors = { critical: 0xff0000, high: 0xff4400, warning: 0xff9900, info: 0x3399ff };
   const icons  = { critical: '🚨', high: '🟠', warning: '⚠️', info: 'ℹ️' };
   const severityNorm = colors[severity] ? severity : 'warning';
+
+  // Dedup: same severity+message within 60s → silently suppress
+  const key = alertDedupKey(message, severityNorm);
+  const now = Date.now();
+  const lastSent = ALERT_DEDUP.get(key);
+  if (lastSent && now - lastSent < ALERT_DEDUP_WINDOW_MS) {
+    if (process.env.NOTIFY_DEBUG) console.log('[notify:alert] deduped', key.slice(0, 50));
+    return { ok: true, deduped: true };
+  }
+  ALERT_DEDUP.set(key, now);
+  // Sweep old entries occasionally so the map doesn't grow forever
+  if (ALERT_DEDUP.size > 64) {
+    for (const [k, ts] of ALERT_DEDUP) {
+      if (now - ts > ALERT_DEDUP_WINDOW_MS) ALERT_DEDUP.delete(k);
+    }
+  }
 
   const payload = {
     username: 'AIPickd Alert 🚨',
