@@ -33,6 +33,9 @@ const {
   getPipelineHealth,
   requeueFailedArticles,
   addKeyword,
+  loadConversation,
+  saveConversation,
+  clearConversation,
 } = require('./supabase');
 const { triggerPipelineRun, getLatestRuns } = require('./github');
 
@@ -58,8 +61,13 @@ const discord  = new Client({
 
 const anthropic = new Anthropic({ apiKey: ANTHROPIC_KEY });
 
-// Historial de conversación por canal (en memoria, se reinicia con el bot)
+// Historial de conversación por canal.
+// In-memory cache backed by Supabase (table bot_conversations) so we
+// survive Railway redeploys without losing context. Lazy-loaded per
+// channel on first message, then written back after each assistant
+// reply (fire-and-forget — failures log but don't block).
 const history = new Map(); // channelId → Message[]
+const historyLoaded = new Set(); // channelIds whose history we've already fetched
 
 // ── System prompt ─────────────────────────────────────────────────────────────
 const SYSTEM_PROMPT = `Eres el asistente AI de AIPickd.com. Ayudas a Alexis (dueño del sitio) con todo lo relacionado al negocio.
@@ -221,6 +229,17 @@ async function runTool(name, input) {
 
 // ── Agentic loop con tool use ─────────────────────────────────────────────────
 async function askClaude(channelId, userMessage) {
+  // Lazy-load history from Supabase on first message per channel.
+  // Subsequent messages use the in-memory copy. This bounds Supabase
+  // reads to 1 per bot lifetime per channel, regardless of message volume.
+  if (!historyLoaded.has(channelId)) {
+    const persisted = await loadConversation(channelId);
+    history.set(channelId, persisted);
+    historyLoaded.add(channelId);
+    if (persisted.length > 0) {
+      console.log(`[bot] restored ${persisted.length} msgs for channel ${channelId}`);
+    }
+  }
   if (!history.has(channelId)) history.set(channelId, []);
   const msgs = history.get(channelId);
 
@@ -242,6 +261,8 @@ async function askClaude(channelId, userMessage) {
     if (res.stop_reason === 'end_turn') {
       const text = res.content.find((b) => b.type === 'text')?.text || '(sin respuesta)';
       msgs.push({ role: 'assistant', content: res.content });
+      // Persist async — don't block the reply. Failures log inside saveConversation.
+      saveConversation(channelId, msgs);
       return text;
     }
 
