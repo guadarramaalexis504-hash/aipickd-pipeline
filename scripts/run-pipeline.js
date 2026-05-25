@@ -48,22 +48,52 @@ const GEN_COUNT = parseInt(args[args.indexOf("--gen") + 1]) || (args.includes("-
 const DO_PUBLISH = !args.includes("--no-pub");
 
 // --- helpers ---
+// Columns the pipeline writes that the production schema doesn't have yet.
+// On a 42703 "column does not exist", supa() strips matching keys and retries
+// once instead of failing the whole publish (which previously left WP posts
+// orphaned with the article still marked draft in Supabase).
+const OPTIONAL_COLUMNS = new Set(["idempotency_key", "quality_score"]);
+
 async function supa(method, endpoint, body) {
-  const res = await fetchWithRetry(
-    `${SUPABASE_URL}/rest/v1/${endpoint}`,
-    {
-      method,
-      headers: {
-        apikey: SUPABASE_SERVICE_ROLE_KEY,
-        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-        "Content-Type": "application/json",
-        Prefer: "return=representation",
+  const doRequest = async (payload) => {
+    const res = await fetchWithRetry(
+      `${SUPABASE_URL}/rest/v1/${endpoint}`,
+      {
+        method,
+        headers: {
+          apikey: SUPABASE_SERVICE_ROLE_KEY,
+          Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          "Content-Type": "application/json",
+          Prefer: "return=representation",
+        },
+        body: payload ? JSON.stringify(payload) : undefined,
       },
-      body: body ? JSON.stringify(body) : undefined,
-    },
-    { timeout: 30000, retries: 3 }
-  );
-  const text = await res.text();
+      { timeout: 30000, retries: 3 }
+    );
+    const text = await res.text();
+    return { res, text };
+  };
+
+  let { res, text } = await doRequest(body);
+
+  // Missing-column errors come in two shapes:
+  //   - 42703 (Postgres "undefined_column" when the query reaches PG)
+  //   - PGRST204 ("Could not find the 'X' column ... in the schema cache",
+  //     emitted by PostgREST before the query is sent)
+  // Strip ALL optional columns we know about and retry once.
+  const isMissingColumn = !res.ok && (text.includes("42703") || text.includes("PGRST204"));
+  if (isMissingColumn && body && typeof body === "object" && !Array.isArray(body)) {
+    const matchPg   = text.match(/column ['"]?[\w.]+\.([\w]+)['"]? does not exist/i);
+    const matchRest = text.match(/Could not find the ['"]([\w]+)['"] column/i);
+    const missingCol = (matchPg && matchPg[1]) || (matchRest && matchRest[1]);
+    if (missingCol && OPTIONAL_COLUMNS.has(missingCol) && missingCol in body) {
+      console.log(`   ℹ️  supa: column "${missingCol}" missing — retrying without optional columns`);
+      const trimmed = { ...body };
+      for (const k of OPTIONAL_COLUMNS) delete trimmed[k];
+      ({ res, text } = await doRequest(trimmed));
+    }
+  }
+
   if (!res.ok) throw new Error(`Supabase ${method} ${endpoint}: ${res.status} ${text}`);
   return text ? JSON.parse(text) : null;
 }
