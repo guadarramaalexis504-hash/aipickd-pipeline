@@ -89,6 +89,18 @@ async function wpReq(method, endpoint, body) {
 // Minimal MD→HTML (matches the main pipeline so output is identical)
 function mdToHtml(md) {
   md = (md || "").replace(/<!--[\s\S]*?-->/g, "");
+
+  // Strip GPT-leftover code fences (```markdown ... ```) — these render
+  // as literal "`markdown" in the published article if not removed.
+  md = md.trim();
+  md = md.replace(/^```[a-zA-Z]*\s*\n/, "");
+  md = md.replace(/\n?```\s*$/, "");
+  md = md.replace(/^```[a-zA-Z]*\s*$/gm, "");
+
+  // Drop leading H1 — WordPress already renders the post title as <h1>,
+  // so a leading "# Title" duplicates the heading (bad SEO).
+  md = md.replace(/^#\s+.+\n+/, "");
+
   let h = md;
   h = h.replace(/^### (.+)$/gm, "<h3>$1</h3>");
   h = h.replace(/^## (.+)$/gm, "<h2>$1</h2>");

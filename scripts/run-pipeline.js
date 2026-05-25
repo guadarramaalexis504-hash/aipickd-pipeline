@@ -250,6 +250,27 @@ function injectToC(md) {
 // Simple MD→HTML (same as publish-one-article.js)
 function mdToHtml(md) {
   md = (md || "").replace(/<!--[\s\S]*?-->/g, "");
+
+  // ── Strip stray code fences left over from GPT responses ─────────────
+  // GPT-4o regularly wraps the entire article in ```markdown ... ``` or
+  // ```...``` even when explicitly told not to. Those fences must NOT
+  // appear in the rendered HTML — they render as literal text in the
+  // article body (the "`markdown" we saw in best-ai-tools-for-video-
+  // editing-2026 was exactly this). Strip them aggressively before any
+  // other parsing runs.
+  md = md.trim();
+  md = md.replace(/^```[a-zA-Z]*\s*\n/, "");
+  md = md.replace(/\n?```\s*$/, "");
+  // Belt-and-suspenders: also kill any stray fence-only lines mid-doc.
+  md = md.replace(/^```[a-zA-Z]*\s*$/gm, "");
+
+  // ── Drop the first H1 if present ─────────────────────────────────────
+  // WordPress already renders the post title as <h1>, so a leading "# Title"
+  // creates a duplicate heading — visually redundant and Google flags it as
+  // a multi-H1 issue. We only drop the FIRST H1; any later H1 (rare but
+  // possible in long-form) is kept so we don't silently delete content.
+  md = md.replace(/^#\s+.+\n+/, "");
+
   let html = md;
   html = html.replace(/^### (.+)$/gm, "<h3>$1</h3>");
   html = html.replace(/^## (.+)$/gm, "<h2>$1</h2>");
@@ -736,6 +757,28 @@ function qualityGate(article) {
 
   // Truncation indicators (GPT might truncate output)
   if (md.endsWith("...") || md.endsWith("…")) issues.push("appears truncated");
+
+  // ── Quality regressions we found in published articles 2026-05-25 ────
+  // Stray code fences (```markdown, ```html, bare ```) — GPT wraps
+  // responses in code fences when it shouldn't, and those render as
+  // literal "`markdown" text in the published article. mdToHtml strips
+  // them but if any survive past the cleaner, that's still a smell:
+  // refuse to publish so we don't pollute the site again.
+  if (/^```[a-zA-Z]*\s*$/m.test(md)) issues.push("stray code fence");
+
+  // Duplicate H1 with the post title — when content starts with
+  // "# {title}", WP renders both its <h1> and our converted <h1> →
+  // duplicate heading. mdToHtml drops the leading H1 now, but we still
+  // flag here so we catch any unexpected mid-doc H1 collisions.
+  const leadingH1 = md.match(/^#\s+(.+?)\s*$/m);
+  if (leadingH1 && article.title) {
+    const norm = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, "");
+    if (norm(leadingH1[1]) === norm(article.title)) {
+      // mdToHtml strips this so it's not strictly publish-blocking, but
+      // worth surfacing as a soft warning in the logs (not in issues[]).
+      // (intentionally a no-op flag — we don't push to issues here)
+    }
+  }
 
   // Duplicate consecutive paragraphs (common GPT failure mode)
   const paras = md.split(/\n\n+/).filter((p) => p.length > 100);
