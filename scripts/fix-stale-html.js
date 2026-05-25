@@ -50,7 +50,15 @@ const SUPA_HEADERS = {
   "Content-Type": "application/json",
 };
 const WP_AUTH = "Basic " + Buffer.from(`${WP_USERNAME}:${WP_ADMIN_PASSWORD}`).toString("base64");
-const UA = "Mozilla/5.0 (compatible; AIPickd-HTMLFix/1.0)";
+// Hostinger/LiteSpeed aggressively 429s "bot-shaped" User-Agents — see the
+// same workaround in run-pipeline.js. Use the real Chrome UA the main
+// pipeline uses so requests aren't filtered before WP even sees them.
+const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+
+// Inter-request delay to dodge Hostinger rate limits (~1.5s/request is
+// what the main pipeline manages to sustain in practice).
+const REQUEST_DELAY_MS = 1500;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ── Same mdToHtml as run-pipeline.js (with fence + H1 fixes) ────────────
 function mdToHtml(md) {
@@ -105,20 +113,37 @@ async function supaGet(path) {
 }
 
 async function wpPatch(postId, body) {
-  const r = await fetch(`https://aipickd.com/wp-json/wp/v2/posts/${postId}`, {
-    method: "POST", // WP REST API accepts POST for updates
-    headers: {
-      Authorization: WP_AUTH,
-      "Content-Type": "application/json",
-      "User-Agent": UA,
-      Accept: "application/json",
-    },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(60_000),
-  });
-  const text = await r.text();
-  if (!r.ok) throw new Error(`WP PATCH posts/${postId}: ${r.status} ${text.slice(0, 200)}`);
-  return JSON.parse(text);
+  // 3 attempts with backoff — same shape as run-pipeline.js wp(). Auth
+  // failures (401/403) don't retry. 429 (rate limit) gets a longer wait.
+  const url = `https://aipickd.com/wp-json/wp/v2/posts/${postId}`;
+  for (let i = 0; i < 3; i++) {
+    try {
+      const r = await fetch(url, {
+        method: "POST",
+        headers: {
+          Authorization: WP_AUTH,
+          "Content-Type": "application/json",
+          "User-Agent": UA,
+          Accept: "application/json",
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(60_000),
+      });
+      const text = await r.text();
+      if (r.ok) return JSON.parse(text);
+      const err = new Error(`WP POST posts/${postId}: ${r.status} ${text.slice(0, 200)}`);
+      err.status = r.status;
+      if (r.status === 401 || r.status === 403) throw err; // unrecoverable
+      if (i === 2) throw err;
+      // 429 → wait 10s+, others 2s+
+      await sleep((r.status === 429 ? 10_000 : 2_000) * (i + 1));
+    } catch (e) {
+      if (e.status === 401 || e.status === 403) throw e;
+      if (i === 2) throw e;
+      // Network errors (fetch failed) — short backoff and retry
+      await sleep(2_000 * (i + 1));
+    }
+  }
 }
 
 (async () => {
@@ -178,6 +203,9 @@ async function wpPatch(postId, body) {
       console.error(`     ❌ ${e.message?.slice(0, 200)}`);
       failed++;
     }
+
+    // Throttle so Hostinger doesn't 429 us on consecutive POSTs
+    await sleep(REQUEST_DELAY_MS);
   }
 
   console.log(`\n📊 Summary: fixed=${fixed} skipped=${skipped} failed=${failed} (dry-run=${!DO_GO})`);
