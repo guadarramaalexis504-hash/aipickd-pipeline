@@ -1087,12 +1087,59 @@ async function pingSearchEngines(url) {
 
 // --- Publishing (all unpublished drafts) ---
 async function publishAllDrafts(maxCount = 10) {
+  // Telemetry: every entry/branch/error notifies Discord directly.
+  // After 21 days of silent failures + a "success" run that published 0 of 6
+  // drafts WITHOUT firing iter catches, we can no longer trust that "no log
+  // = nothing happened". Each step now emits a trace marker.
+  const trace = (msg) => {
+    console.log(`${ts()} [publish] ${msg}`);
+  };
+
+  trace(`▶ publishAllDrafts(maxCount=${maxCount}) start`);
+
   // Only fetch articles that haven't been pushed to WP yet
-  const drafts = await supa(
-    "GET",
-    `articles?status=eq.draft&wp_post_id=is.null&order=created_at.asc&limit=${maxCount}&select=*,niche:niches(slug)`
-  );
-  if (!drafts || drafts.length === 0) return { count: 0, skipped: 0 };
+  let drafts;
+  try {
+    drafts = await supa(
+      "GET",
+      `articles?status=eq.draft&wp_post_id=is.null&order=created_at.asc&limit=${maxCount}&select=*,niche:niches(slug)`
+    );
+  } catch (e) {
+    const msg = `supa("GET" drafts) threw: ${e.message?.slice(0, 200)}`;
+    trace(`❌ ${msg}`);
+    notifyAlert(`🚨 **publishAllDrafts: drafts query failed**\n\`\`\`\n${msg}\n\`\`\``, "critical").catch(() => {});
+    throw e;
+  }
+
+  trace(`fetched ${Array.isArray(drafts) ? drafts.length : "NON-ARRAY:" + typeof drafts} drafts`);
+
+  if (!drafts || drafts.length === 0) {
+    // Sanity check: confirm via direct fetch whether Supabase truly has zero
+    // unpublished drafts. If our helper got [] but a raw fetch finds rows,
+    // there's a bug in supa() or fetchWithRetry — surface it loudly.
+    try {
+      const directRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/articles?status=eq.draft&wp_post_id=is.null&select=id&limit=20`,
+        { headers: { apikey: SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` }, signal: AbortSignal.timeout(15_000) }
+      );
+      const rawText = await directRes.text();
+      let directCount = "?";
+      try { directCount = JSON.parse(rawText).length; } catch {}
+      trace(`sanity raw fetch → status=${directRes.status} drafts=${directCount}`);
+      if (typeof directCount === "number" && directCount > 0) {
+        notifyAlert(
+          `🚨 **publishAllDrafts mismatch!** supa() returned 0 drafts but a raw fetch found ${directCount}. ` +
+          `That means the helper, fetchWithRetry, or SSRF allowlist is corrupting the response.\n\n` +
+          `Raw body[0:300]: \`${rawText.slice(0, 300).replace(/`/g, "'")}\``,
+          "critical"
+        ).catch(() => {});
+      }
+    } catch (e) {
+      trace(`sanity raw fetch failed: ${e.message?.slice(0, 200)}`);
+    }
+    trace(`◀ early return: no drafts`);
+    return { count: 0, skipped: 0 };
+  }
 
   const published = [];
   let skippedCount = 0;
@@ -1101,9 +1148,24 @@ async function publishAllDrafts(maxCount = 10) {
   const publishedArticles = await supa("GET", "articles?status=eq.published&select=title,slug").catch(() => []);
   const normalizeTitle = (s) => (s || "").toLowerCase().replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, " ").trim();
   const publishedTitles = (publishedArticles || []).map(a => normalizeTitle(a.title));
+  trace(`pre-loaded ${publishedTitles.length} published titles for dup detection`);
 
-  // Get WP categories once
-  const cats = await wp("GET", "categories?per_page=20&_fields=id,slug");
+  // Get WP categories once. If this throws, publishAllDrafts throws → run fails
+  // fast (visible) instead of silently no-oping.
+  let cats;
+  try {
+    cats = await wp("GET", "categories?per_page=20&_fields=id,slug");
+  } catch (e) {
+    const msg = `wp("GET" categories) threw: ${e.message?.slice(0, 200)}`;
+    trace(`❌ ${msg}`);
+    notifyAlert(
+      `🚨 **publishAllDrafts: WP categories fetch failed** — every iter would crash too. Stopping early.\n\`\`\`\n${msg}\n\`\`\``,
+      "critical"
+    ).catch(() => {});
+    throw e;
+  }
+  trace(`fetched ${Array.isArray(cats) ? cats.length : "NON-ARRAY"} WP categories`);
+
   const catMap = {};
   for (const c of cats || []) catMap[c.slug] = c.id;
   const nicheCatMap = {
@@ -1113,6 +1175,17 @@ async function publishAllDrafts(maxCount = 10) {
     "ai-coding": catMap["ai-coding"],
     "ai-hosting": catMap["ai-infrastructure"],
   };
+
+  trace(`entering for-loop with ${drafts.length} drafts to process`);
+
+  // Send a one-shot summary to Discord so we KNOW the loop started, regardless
+  // of what happens inside it.
+  notifyAlert(
+    `📤 **publishAllDrafts iter starting**\n` +
+    `Drafts: ${drafts.length} · Published titles: ${publishedTitles.length} · ` +
+    `WP cats: ${Array.isArray(cats) ? cats.length : "?"} · WP_STATUS: \`${WP_STATUS}\``,
+    "info"
+  ).catch(() => {});
 
   // Per-article hard cap: each publish is wrapped in a 4-min budget. If it
   // exceeds that, log + skip + move on so one stuck article doesn't burn the
