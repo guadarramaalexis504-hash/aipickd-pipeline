@@ -68,10 +68,17 @@ async function supa(method, endpoint, body) {
   return text ? JSON.parse(text) : null;
 }
 
+// Cap max_tokens. 16000 was wildly over-provisioned: gpt-4o rarely returns
+// more than 4000 tokens for our prompts. Lower cap = faster responses + fewer
+// upstream stalls. Caller's request still wins if smaller.
+const GPT_MAX_TOKENS_CAP = 8000;
+const GPT_ATTEMPT_TIMEOUT_MS = 90_000; // per-attempt — was 180s
+const GPT_MAX_RETRIES = 2;             // was 3 — third retry rarely succeeds within timeout budget
+
 async function gpt(model, system, user, maxTokens, jsonMode = false) {
   const body = {
     model,
-    max_tokens: maxTokens,
+    max_tokens: Math.min(maxTokens || GPT_MAX_TOKENS_CAP, GPT_MAX_TOKENS_CAP),
     messages: [
       { role: "system", content: system },
       { role: "user", content: user },
@@ -80,7 +87,7 @@ async function gpt(model, system, user, maxTokens, jsonMode = false) {
   if (jsonMode) body.response_format = { type: "json_object" };
   const attempt = async () => {
     const ctrl = new AbortController();
-    const to = setTimeout(() => ctrl.abort(), 180_000);
+    const to = setTimeout(() => ctrl.abort(), GPT_ATTEMPT_TIMEOUT_MS);
     try {
       const res = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
@@ -98,12 +105,12 @@ async function gpt(model, system, user, maxTokens, jsonMode = false) {
       clearTimeout(to);
     }
   };
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i <= GPT_MAX_RETRIES; i++) {
     try {
       return await attempt();
     } catch (e) {
-      if (i === 2) throw e;
-      console.log(`   (retry ${i + 1}/3: ${e.message.slice(0, 80)})`);
+      if (i === GPT_MAX_RETRIES) throw e;
+      console.log(`   (retry ${i + 1}/${GPT_MAX_RETRIES}: ${e.message.slice(0, 80)})`);
       await new Promise((r) => setTimeout(r, 2000 * (i + 1)));
     }
   }
@@ -139,11 +146,15 @@ async function wp(method, endpoint, body) {
       clearTimeout(to);
     }
   };
-  for (let i = 0; i < 5; i++) {
+  // 3 attempts (was 5). Auth/4xx failures don't recover with more retries;
+  // network/5xx/429 backed off with sane delays still recovers within budget.
+  for (let i = 0; i < 3; i++) {
     try {
       return await attempt();
     } catch (e) {
-      if (i === 4) throw e;
+      // Don't retry auth failures — they're config errors, not transient
+      if (e.status === 401 || e.status === 403) throw e;
+      if (i === 2) throw e;
       // Longer backoff for 429 (rate limit) — Hostinger may need 10-30s to clear
       const isRateLimit = e.status === 429;
       const baseWait = isRateLimit ? 10000 : 2000;
@@ -316,9 +327,10 @@ async function generateOne() {
     return { skipped: true, reason: "All top-5 keywords are exhausted (3+ failures each)" };
   }
 
-  console.log(`   📝 Keyword: "${kw.keyword}" (${kw.niche?.name})`);
+  console.log(`${ts()} 📝 Keyword: "${kw.keyword}" (${kw.niche?.name})`);
   await supa("PATCH", `keywords?id=eq.${kw.id}`, { status: "in_progress" });
   let totalCost = 0;
+  const genStart = Date.now();
 
   try {
     // Article-type-specific structural requirements
@@ -441,7 +453,7 @@ Output: pure markdown. Start with # H1. No commentary before or after.`,
 
     // ── Expansion helper (reusable) ──────────────────────────────────────────
     const runExpansionPass = async (text, currentWords, targetWords = 2600) => {
-      console.log(`   ⚡ Expansion pass (${currentWords}w → target ${targetWords}w)...`);
+      console.log(`${ts()} ⚡ Expansion pass (${currentWords}w → target ${targetWords}w)...`);
       const expandRes = await gpt(
         "gpt-4o-2024-11-20",
         "You are an expert content editor for a tech review publication. Expand the article to reach the target word count WITHOUT padding. Every sentence you add must provide real value: concrete examples, specific numbers, step-by-step walkthroughs, real-world scenarios, or comparison data.",
@@ -461,18 +473,26 @@ ARTICLE TO EXPAND (${currentWords} words — EXPAND TO ${targetWords}+):
 ${text}
 
 Output: the COMPLETE expanded markdown article starting with # heading. No preamble.`,
-        16000
+        8000
       );
       totalCost += estimateCost("gpt-4o-2024-11-20", expandRes.usage);
       const newWords = expandRes.text.split(/\s+/).length;
-      console.log(`   ✅ Expanded: ${currentWords}w → ${newWords}w`);
+      // Guard against the "creative" rewrite that returns FEWER words. If the
+      // model regressed (commonly happens with 4o on rescue passes), keep the
+      // original — we already met the minimum-viable threshold by entering this
+      // pass, so a regression is worse than no-op.
+      if (newWords < currentWords) {
+        console.log(`${ts()} ⚠️  Expansion regressed (${currentWords}w → ${newWords}w) — keeping original`);
+        return text;
+      }
+      console.log(`${ts()} ✅ Expanded: ${currentWords}w → ${newWords}w`);
       return expandRes.text;
     };
 
     // ── Pass 1: Pre-polish expansion if draft is short ────────────────────
     let finalDraftText = draftRes.text;
     const draftWords = draftRes.text.split(/\s+/).length;
-    console.log(`   📏 Draft: ${draftWords}w`);
+    console.log(`${ts()} 📏 Draft: ${draftWords}w (gen elapsed ${((Date.now()-genStart)/1000).toFixed(1)}s)`);
     if (draftWords < 2000) {
       finalDraftText = await runExpansionPass(draftRes.text, draftWords, 2600);
     }
@@ -500,7 +520,7 @@ STRICT RULES:
 
     // ── Pass 2: Post-polish rescue if polish trimmed too much ─────────────
     const postPolishWords = polishRes.text.split(/\s+/).length;
-    console.log(`   📏 Post-polish: ${postPolishWords}w (was ${polishWords}w)`);
+    console.log(`${ts()} 📏 Post-polish: ${postPolishWords}w (was ${polishWords}w, gen elapsed ${((Date.now()-genStart)/1000).toFixed(1)}s)`);
     let finalText = polishRes.text;
     if (postPolishWords < 1900) {
       console.log(`   🚨 Polish trimmed too much! Running rescue expansion...`);
@@ -723,6 +743,8 @@ async function generateFeaturedImage(title, slug, postId, articleType = "article
 
   async function uploadBufferToWP(buffer, mimeType = "image/jpeg") {
     const ext = mimeType === "image/jpeg" ? "jpg" : "png";
+    // Hard 90s cap on the upload — Hostinger can hang silently on shared hosting,
+    // and a missing timeout here was a primary contributor to the 25-min runaway.
     const uploadRes = await fetch("https://aipickd.com/wp-json/wp/v2/media", {
       method: "POST",
       headers: {
@@ -732,6 +754,7 @@ async function generateFeaturedImage(title, slug, postId, articleType = "article
         "User-Agent": "Mozilla/5.0 AIPickd-pipeline/1.0",
       },
       body: buffer,
+      signal: AbortSignal.timeout(90_000),
     });
     const uploadData = await uploadRes.json();
     if (!uploadRes.ok) throw new Error(`WP upload: ${uploadRes.status}`);
@@ -752,14 +775,17 @@ async function generateFeaturedImage(title, slug, postId, articleType = "article
     const kwHint = primaryKeyword ? ` (topic: ${primaryKeyword})` : "";
     const dallePrompt = `${styleHint}${kwHint}. Modern tech editorial style, abstract geometric shapes, deep navy and electric blue palette with emerald green accents, 16:9 landscape. Clean flat design, high contrast. Absolutely NO text, NO logos, NO UI elements, NO faces, NO brand names.`;
 
+    // 60s cap on the DALL-E generation request (the image API is slower than chat).
     const res = await fetch("https://api.openai.com/v1/images/generations", {
       method: "POST",
       headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "content-type": "application/json" },
       body: JSON.stringify({ model: "dall-e-3", prompt: dallePrompt, n: 1, size: "1792x1024", quality: "standard" }),
+      signal: AbortSignal.timeout(60_000),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(`DALL-E: ${JSON.stringify(data).slice(0, 200)}`);
-    const imgRes = await fetch(data.data[0].url);
+    // 30s cap on the image download — DALL-E CDN URLs occasionally hang.
+    const imgRes = await fetch(data.data[0].url, { signal: AbortSignal.timeout(30_000) });
     const buffer = Buffer.from(await imgRes.arrayBuffer());
     return await uploadBufferToWP(buffer, "image/png");
   } catch (e) {
@@ -779,7 +805,7 @@ async function generateFeaturedImage(title, slug, postId, articleType = "article
     const photo = await unsplashRes.json();
     const imgUrl = photo.urls?.regular;
     if (!imgUrl) throw new Error("No image URL from Unsplash");
-    const imgRes = await fetch(imgUrl);
+    const imgRes = await fetch(imgUrl, { signal: AbortSignal.timeout(20_000) });
     const buffer = Buffer.from(await imgRes.arrayBuffer());
     console.log(`   📸 Unsplash fallback: "${photo.alt_description || query}" by ${photo.user?.name}`);
     return await uploadBufferToWP(buffer, "image/jpeg");
@@ -1058,7 +1084,16 @@ async function publishAllDrafts(maxCount = 10) {
     "ai-hosting": catMap["ai-infrastructure"],
   };
 
+  // Per-article hard cap: each publish is wrapped in a 4-min budget. If it
+  // exceeds that, log + skip + move on so one stuck article doesn't burn the
+  // entire workflow timeout. (Image gen + WP upload + schema = ~60s normal,
+  // 4 min is a generous ceiling.)
+  const ARTICLE_PUBLISH_BUDGET_MS = 4 * 60_000;
+
   for (const article of drafts) {
+    const articleStart = Date.now();
+    console.log(`${ts()} 📤 Publishing "${article.title?.slice(0, 60)}"`);
+
     // Duplicate detection — skip if very similar title already published
     const normNewTitle = normalizeTitle(article.title);
     const isDuplicate = publishedTitles.some(existing => {
@@ -1286,11 +1321,36 @@ async function publishAllDrafts(maxCount = 10) {
     } catch (e) {
       console.log(`   ✗ Failed for ${article.title}: ${e.message.slice(0, 100)}`);
     }
+
+    const articleMs = Date.now() - articleStart;
+    if (articleMs > ARTICLE_PUBLISH_BUDGET_MS) {
+      console.log(`${ts()} ⚠️  Article publish took ${(articleMs/1000).toFixed(1)}s (exceeded ${ARTICLE_PUBLISH_BUDGET_MS/1000}s budget) — possible upstream slowness`);
+    } else {
+      console.log(`${ts()} ⏱️  Article publish: ${(articleMs/1000).toFixed(1)}s`);
+    }
   }
   return { count: published.length, published, skipped: skippedCount };
 }
 
 // --- Main ---
+// Timestamp helper for trace logs — every long-running stage prints [HH:MM:SS]
+// so a stuck run can be diagnosed without re-running locally.
+function ts() {
+  const d = new Date();
+  return `[${String(d.getUTCHours()).padStart(2,"0")}:${String(d.getUTCMinutes()).padStart(2,"0")}:${String(d.getUTCSeconds()).padStart(2,"0")}Z]`;
+}
+
+// 20-min soft warning — Discord ping BEFORE the 45-min workflow timeout fires,
+// so a stuck run is visible while it still has time to finish (or be killed).
+function startSoftTimeoutWarning(label = "pipeline") {
+  return setTimeout(() => {
+    notifyAlert(
+      `⏰ **Soft timeout warning:** \`${label}\` lleva 20 min corriendo en GitHub Actions.\nQuedan ~25 min antes del kill automático. Si no termina, revisar logs.`,
+      "warning"
+    ).catch(() => {});
+  }, 20 * 60_000).unref?.();
+}
+
 (async () => {
   const runStart = new Date();
   console.log("══════════════════════════════════════════════════════");
@@ -1298,6 +1358,23 @@ async function publishAllDrafts(maxCount = 10) {
   console.log(`  Config: AUTO_PUBLISH=${AUTO_PUBLISH} → WP status=${WP_STATUS}`);
   console.log(`          Generate ${GEN_COUNT}, Publish=${DO_PUBLISH}`);
   console.log("══════════════════════════════════════════════════════\n");
+
+  // Schedule the soft warning. Only meaningful in CI (where a 45-min timeout
+  // is enforced); harmless locally.
+  startSoftTimeoutWarning("generate.yml");
+
+  // Unstuck any keyword left in `in_progress` by a prior killed run. The
+  // workflow's `concurrency: aipickd-mutations / cancel-in-progress: false`
+  // guarantees no other run is touching them right now, so it's safe to reset.
+  try {
+    const orphans = await supa("GET", "keywords?status=eq.in_progress&select=id,keyword");
+    if (Array.isArray(orphans) && orphans.length > 0) {
+      console.log(`${ts()} 🔓 Found ${orphans.length} orphan keyword(s) stuck in_progress — resetting to queued`);
+      await supa("PATCH", "keywords?status=eq.in_progress", { status: "queued" });
+    }
+  } catch (e) {
+    console.log(`${ts()} ⚠️  Orphan unstucker failed: ${e.message.slice(0, 100)}`);
+  }
 
   // --- Generation phase ---
   let totalGenCost = 0;

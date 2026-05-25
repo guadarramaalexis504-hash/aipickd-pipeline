@@ -23,7 +23,11 @@ concurrency:
 jobs:
   generate:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # 45-min ceiling. The pipeline itself targets <10 min, but post-publish
+    # steps (internal-links, dedup-wordpress, cta-injector, sitemap, indexnow)
+    # serialize per-article and the old 25-min cap was killing healthy runs
+    # whenever any single upstream call (DALL-E, Hostinger) hiccupped.
+    timeout-minutes: 45
 
     env:
       AUTO_PUBLISH: "true"
@@ -49,6 +53,19 @@ jobs:
           discord-webhook-articulos: ${{ secrets.DISCORD_WEBHOOK_ARTICULOS }}
           discord-webhook-pipeline: ${{ secrets.DISCORD_WEBHOOK_PIPELINE }}
           discord-webhook-alertas: ${{ secrets.DISCORD_WEBHOOK_ALERTAS }}
+
+      # Healthchecks.io START ping — lets us alert when a run begins but never
+      # completes (vs. the post-run heartbeat which only catches success/fail).
+      - name: Ping healthchecks.io — start
+        continue-on-error: true
+        env:
+          HEALTHCHECK_URL_GENERATE: ${{ secrets.HEALTHCHECK_URL_GENERATE }}
+        run: |
+          node -e "
+          const { ping } = require('./scripts/lib/heartbeat');
+          ping('GENERATE', { state: 'start', message: 'run_id=${{ github.run_id }}' })
+            .then(r => console.log('Start heartbeat:', r.ok ? 'OK' : r.reason));
+          "
 
       # ── Critical: any failure here MUST stop the pipeline ──────────────
       - name: Validate secrets present
@@ -178,6 +195,8 @@ jobs:
       - name: Ping healthchecks.io heartbeat
         if: always()
         continue-on-error: true
+        env:
+          HEALTHCHECK_URL_GENERATE: ${{ secrets.HEALTHCHECK_URL_GENERATE }}
         run: |
           node -e "
           const { ping } = require('./scripts/lib/heartbeat');

@@ -77,9 +77,21 @@ function assertHostAllowed(url, explicitList) {
   let list = explicitList ?? parseAllowlist();
   if (!list) {
     list = [...DEFAULT_ALLOWED_HOSTS];
-    if (process.env.SUPABASE_URL) {
+    // Resolve SUPABASE_URL from process.env (CI) OR .env (local dev).
+    // Previously only checked process.env, which silently blocked local runs
+    // where the secret lives in .env. loadEnv() unifies both sources.
+    let supabaseUrl = process.env.SUPABASE_URL;
+    if (!supabaseUrl) {
       try {
-        list.push(new URL(process.env.SUPABASE_URL).host.toLowerCase());
+        const { loadEnv } = require("./env");
+        supabaseUrl = loadEnv().SUPABASE_URL;
+      } catch {
+        /* env helper unavailable — fall through to defaults */
+      }
+    }
+    if (supabaseUrl) {
+      try {
+        list.push(new URL(supabaseUrl).host.toLowerCase());
       } catch {
         /* ignore malformed SUPABASE_URL — validate-secrets catches that */
       }
