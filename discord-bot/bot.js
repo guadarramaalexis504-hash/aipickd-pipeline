@@ -31,13 +31,18 @@ const {
   getKeywordsQueue,
   getAffiliates,
   getPipelineHealth,
+  getPipelinePauseState,
+  auditArticle,
   requeueFailedArticles,
   addKeyword,
+  pausePipeline,
+  resumePipeline,
+  regenerateArticle,
   loadConversation,
   saveConversation,
   clearConversation,
 } = require('./supabase');
-const { triggerPipelineRun, getLatestRuns } = require('./github');
+const { triggerPipelineRun, getLatestRuns, dispatchWorkflow } = require('./github');
 
 // ── Config ────────────────────────────────────────────────────────────────────
 const DISCORD_TOKEN   = process.env.DISCORD_BOT_TOKEN;
@@ -162,9 +167,16 @@ CAPACIDADES DE ACCIÓN (puedes ejecutarlas cuando Alexis lo pida):
 - Agregar keywords a la cola → usa add_keyword
 - Ver salud del pipeline → usa get_pipeline_health
 - Ver últimos runs de GitHub Actions → usa get_github_runs
+- Auditar UN artículo específico por slug → usa audit_article (detecta fence/dup-H1/short)
+- Re-renderizar UN artículo (fix HTML bugs) → usa republish_article
+- Marcar un artículo malo pa' regenerar → usa regenerate_article
+- Pausar el pipeline (debugging) → usa pause_pipeline
+- Reanudar el pipeline → usa resume_pipeline
+- Disparar cualquier otro workflow → usa dispatch_workflow
 
 IMPORTANTE: Si te preguntan sobre stats, artículos, costos o keywords → usa las tools, no adivines.
-Antes de ejecutar acciones costosas (trigger_pipeline múltiples veces), confirma con Alexis.`;
+Antes de ejecutar acciones costosas (trigger_pipeline múltiples veces), confirma con Alexis.
+Pausar el pipeline es serio — siempre confirma con Alexis antes de llamar pause_pipeline.`;
 
 // ── Tools para Claude ─────────────────────────────────────────────────────────
 const TOOLS = [
@@ -248,6 +260,77 @@ const TOOLS = [
       required: ['keyword'],
     },
   },
+
+  // ── New tools (2026-05-25 brainstorm D3) ──
+  {
+    name: 'audit_article',
+    description: 'Audita UN artículo específico por slug. Devuelve word count, quality score, status WP/Supabase, y bugs detectados (fence leftover, dup-H1, AFFILIATE leftover, etc).',
+    input_schema: {
+      type: 'object',
+      properties: {
+        slug: { type: 'string', description: 'Slug del artículo (ej: "best-ai-tools-for-video-editing-2026")' },
+      },
+      required: ['slug'],
+    },
+  },
+  {
+    name: 'republish_article',
+    description: 'Dispara fix-stale-html.yml para UN artículo específico (re-renderiza HTML desde markdown, arregla fence/dup-H1). Para artículos ya publicados.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        slug: { type: 'string', description: 'Slug del artículo a re-renderizar' },
+      },
+      required: ['slug'],
+    },
+  },
+  {
+    name: 'regenerate_article',
+    description: 'Marca un artículo malo como qa_failed y re-encola su keyword para próxima generación. NO borra el artículo de WP — solo el row de Supabase queda flagged.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        slug:   { type: 'string', description: 'Slug del artículo a regenerar' },
+        reason: { type: 'string', description: 'Por qué regenerar (para logs)' },
+      },
+      required: ['slug'],
+    },
+  },
+  {
+    name: 'pause_pipeline',
+    description: 'PAUSA el pipeline de generación. El próximo cron run aborta cleanly al inicio. Usar cuando hay un bug y no quieres más publicaciones hasta arreglar. SIEMPRE confirma con Alexis antes de llamar esta tool.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        reason:    { type: 'string', description: 'Por qué pausar (visible en /status)' },
+        paused_by: { type: 'string', description: 'Tu user ID o "discord-bot"' },
+      },
+      required: ['reason'],
+    },
+  },
+  {
+    name: 'resume_pipeline',
+    description: 'Reanuda el pipeline después de un pause. El próximo cron run procesará normalmente.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        resumed_by: { type: 'string', description: 'Tu user ID o "discord-bot"' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'dispatch_workflow',
+    description: 'Genérico — dispara cualquier workflow_dispatch del repo por su filename (ej: "fix-stale-html.yml", "cta-injector-manual.yml", "requeue-qa-failed.yml"). Useful pa\' workflows que no tienen tool dedicada.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        workflow: { type: 'string', description: 'Nombre del archivo workflow (ej: "fix-stale-html.yml")' },
+        inputs:   { type: 'object', description: 'Inputs del workflow_dispatch como key-value', additionalProperties: true },
+      },
+      required: ['workflow'],
+    },
+  },
 ];
 
 async function runTool(name, input) {
@@ -270,6 +353,13 @@ async function runTool(name, input) {
                                         input.search_volume || 0,
                                         input.priority || 5
                                       );
+      // 2026-05-25 brainstorm D3 — new ops tools
+      case 'audit_article':           return await auditArticle(input.slug);
+      case 'republish_article':       return await dispatchWorkflow('fix-stale-html.yml', { slug: input.slug });
+      case 'regenerate_article':      return await regenerateArticle(input.slug, input.reason);
+      case 'pause_pipeline':          return await pausePipeline(input.reason, input.paused_by);
+      case 'resume_pipeline':         return await resumePipeline(input.resumed_by);
+      case 'dispatch_workflow':       return await dispatchWorkflow(input.workflow, input.inputs || {});
       default: return { error: `Tool desconocida: ${name}` };
     }
   } catch (e) {

@@ -63,4 +63,39 @@ async function getLatestRuns() {
   }));
 }
 
-module.exports = { triggerPipelineRun, getLatestRuns };
+/**
+ * Generic workflow dispatch — fires any workflow_dispatch by filename.
+ * Lets the bot trigger fix-stale-html, cta-injector-manual, requeue-qa-failed, etc.
+ * without us having to add a new GitHub helper per workflow.
+ *
+ * @param {string} workflowFile  e.g. "fix-stale-html.yml"
+ * @param {object} inputs        key/value pairs matching the workflow's inputs:
+ *                               GitHub API requires string values, so we coerce.
+ * @param {string} ref           Branch to run against, default 'main'
+ */
+async function dispatchWorkflow(workflowFile, inputs = {}, ref = 'main') {
+  if (!GITHUB_TOKEN) throw new Error('GITHUB_TOKEN no configurado en Railway');
+  if (!/^[a-z0-9._-]+\.ya?ml$/i.test(workflowFile)) {
+    throw new Error(`Invalid workflow file name: ${workflowFile}`);
+  }
+  // GitHub workflow_dispatch inputs must be strings — coerce numbers/booleans.
+  const stringInputs = Object.fromEntries(
+    Object.entries(inputs).map(([k, v]) => [k, typeof v === 'string' ? v : String(v)])
+  );
+  await ghFetch(
+    `/repos/${REPO_OWNER}/${REPO_NAME}/actions/workflows/${workflowFile}/dispatches`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ ref, inputs: stringInputs }),
+    }
+  );
+  return {
+    triggered: true,
+    workflow: workflowFile,
+    inputs: stringInputs,
+    message: `Workflow "${workflowFile}" disparado en ${ref}`,
+    actions_url: `https://github.com/${REPO_OWNER}/${REPO_NAME}/actions/workflows/${workflowFile}`,
+  };
+}
+
+module.exports = { triggerPipelineRun, getLatestRuns, dispatchWorkflow };
