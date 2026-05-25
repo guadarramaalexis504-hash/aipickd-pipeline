@@ -49,6 +49,56 @@ const MAX_REPLY_LEN   = 1900; // chars por mensaje de Discord
 // Canales donde el bot responde a TODO (sin necesidad de @mención)
 const AUTO_RESPOND_KEYWORDS = ['claude', 'bot', 'aipickd-ai', 'asistente'];
 
+// ── Rate limiting (anti-abuse / cost protection) ──────────────────────────────
+// Sliding-window counters per user and per channel. The window is rolling:
+// we keep a list of timestamps and prune anything older than RATE_WINDOW_MS
+// before each check. If the surviving count exceeds the limit, we refuse
+// politely and skip the Anthropic call entirely.
+//
+// These limits are conservative — Alexis can easily raise them by editing
+// the constants if real usage demands more. The point is to prevent a
+// runaway loop or a compromised account from burning the monthly budget.
+const RATE_WINDOW_MS    = 60 * 60 * 1000; // 1 hour
+const RATE_USER_LIMIT   = 30;             // messages/hour per user
+const RATE_CHANNEL_LIMIT = 100;           // messages/hour per channel
+const rateUser = new Map();    // userId → [timestamp, ...]
+const rateChannel = new Map(); // channelId → [timestamp, ...]
+
+function pruneWindow(list, now) {
+  while (list.length > 0 && now - list[0] > RATE_WINDOW_MS) list.shift();
+}
+
+/**
+ * Returns null if the request is allowed; otherwise a polite reject message
+ * with the cooldown estimate. Pruning happens before counting so old entries
+ * don't permanently inflate the count.
+ */
+function checkRateLimit(userId, channelId) {
+  const now = Date.now();
+
+  const u = rateUser.get(userId) || [];
+  pruneWindow(u, now);
+  if (u.length >= RATE_USER_LIMIT) {
+    const oldest = u[0];
+    const waitMin = Math.ceil((RATE_WINDOW_MS - (now - oldest)) / 60000);
+    return `🐢 Aguanta manito, llevas ${u.length} mensajes esta hora. Espera ~${waitMin} min y vuelve.`;
+  }
+
+  const c = rateChannel.get(channelId) || [];
+  pruneWindow(c, now);
+  if (c.length >= RATE_CHANNEL_LIMIT) {
+    const waitMin = Math.ceil((RATE_WINDOW_MS - (now - c[0])) / 60000);
+    return `🚦 Este canal lleva ${c.length} mensajes la última hora — calmando ${waitMin} min.`;
+  }
+
+  // Allowed — record the hit
+  u.push(now);
+  c.push(now);
+  rateUser.set(userId, u);
+  rateChannel.set(channelId, c);
+  return null;
+}
+
 // ── Clientes ──────────────────────────────────────────────────────────────────
 const discord  = new Client({
   intents: [
@@ -326,6 +376,15 @@ discord.on(Events.MessageCreate, async (message) => {
 
   const content = stripMention(message.content);
   if (!content || content.length < 2) return;
+
+  // Rate limit check BEFORE the Anthropic call — this is the actual cost
+  // protection. We respond with a polite reject (and a Discord typing
+  // indicator is skipped) so a runaway loop just bounces off cheaply.
+  const rejection = checkRateLimit(message.author.id, message.channel.id);
+  if (rejection) {
+    await message.reply(rejection).catch(() => {});
+    return;
+  }
 
   try {
     await message.channel.sendTyping();
