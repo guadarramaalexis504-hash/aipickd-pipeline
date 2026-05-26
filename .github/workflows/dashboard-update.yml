@@ -1,0 +1,62 @@
+name: Dashboard Update (hourly Discord status)
+
+# Hourly cron that EDITS a single pinned-style Discord message with the
+# current pipeline state. One message at the top of #pipeline-status
+# beats scrolling history to figure out what's going on.
+#
+# Cost: $0 — Discord webhook + Supabase reads only.
+
+on:
+  workflow_dispatch:
+    inputs:
+      reset:
+        description: "Forget the saved message_id and post a fresh one"
+        required: false
+        default: "false"
+        type: choice
+        options: ["false", "true"]
+  schedule:
+    # Every hour at minute 5 so it's not contending with the :00 cron rush
+    - cron: "5 * * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  # Read-only on Supabase — doesn't need the mutations group.
+  group: aipickd-dashboard-update
+  cancel-in-progress: true # if we missed one, just post the latest
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup AIPickd environment
+        uses: ./.github/actions/setup-env
+        with:
+          supabase-url: ${{ secrets.SUPABASE_URL }}
+          supabase-service-role-key: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          wp-username: ${{ secrets.WP_USERNAME }}
+          wp-admin-password: ${{ secrets.WP_ADMIN_PASSWORD }}
+          discord-webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          discord-webhook-articulos: ${{ secrets.DISCORD_WEBHOOK_ARTICULOS }}
+          discord-webhook-pipeline: ${{ secrets.DISCORD_WEBHOOK_PIPELINE }}
+          discord-webhook-alertas: ${{ secrets.DISCORD_WEBHOOK_ALERTAS }}
+
+      - name: Run dashboard update
+        env:
+          RESET: ${{ github.event.inputs.reset || 'false' }}
+        run: |
+          ARGS=""
+          if [ "$RESET" = "true" ]; then ARGS="--reset"; fi
+          echo "Running: node scripts/update-dashboard.js $ARGS"
+          node scripts/update-dashboard.js $ARGS
