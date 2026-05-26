@@ -25,6 +25,7 @@ const { notify, notifyArticle, notifyPipeline, notifyAlert, calcQualityScore } =
 const { loadEnv } = require("./lib/env");
 const { fetchWithRetry } = require("./lib/http");
 const { publishKey: idempotencyPublishKey } = require("./lib/idempotency");
+const { validateRenderedHtml } = require("./lib/html-validator");
 
 const env = loadEnv();
 
@@ -551,25 +552,33 @@ Output: the COMPLETE expanded markdown article starting with # heading. No pream
     }
 
     // ── Polish — CRITICAL: must NOT reduce word count ────────────────────
+    // 2026-05-25: upgraded from gpt-4o-mini → gpt-4o-2024-11-20.
+    // Mini was the documented root cause of qa_failed-too-short: it kept
+    // trimming 2800w drafts down to <1200w even with explicit MIN
+    // instructions. The full 4o respects length constraints far more
+    // reliably. Cost delta is ~+$0.03/article (~+30% per polish call),
+    // single digit % of monthly spend — worth paying to kill the
+    // qa_failed cycle that wasted whole drafts.
     const polishWords = finalDraftText.split(/\s+/).length;
     const polishRes = await gpt(
-      "gpt-4o-mini",
+      "gpt-4o-2024-11-20",
       `You are a senior editor for a top-tier tech review publication. Your job: IMPROVE quality, NEVER reduce length.
 
 STRICT RULES:
 1. NEVER remove paragraphs, sections, or list items — only rewrite individual sentences
 2. NEVER shorten the article — if unsure, leave the original sentence intact
-3. Remove AI-tells: "in today's fast-paced world", "it's important to note", "let's dive in", "revolutionary", "game-changer", "seamless", "cutting-edge", "unlock", "harness the power", "in the realm of"
+3. Remove AI-tells: "in today's fast-paced world", "it's important to note", "let's dive in", "revolutionary", "game-changer", "seamless", "cutting-edge", "unlock", "harness the power", "in the realm of", "when it comes to", "whether you're", "in the world of", "delve into", "let's explore", "let's take a look", "elevate your", "landscape", "ecosystem"
 4. Fix grammar errors and awkward phrasing
 5. Ensure every tool has both pros AND cons stated clearly
 6. Keep all [AFFILIATE:...] tags EXACTLY as-is (don't touch them)
 7. Keep all markdown structure: headings, tables, bullet lists, numbered lists, blockquotes
 8. MINIMUM output: ${Math.max(polishWords - 50, 1800)} words (you started with ${polishWords} — DO NOT go below this)
-9. Output: the complete revised markdown only — start with # heading, no commentary`,
+9. Output: the complete revised markdown only — start with # heading, no commentary
+10. DO NOT wrap your output in code fences (\`\`\`markdown ... \`\`\`). Output ONLY raw markdown.`,
       finalDraftText,
       16000
     );
-    totalCost += estimateCost("gpt-4o-mini", polishRes.usage);
+    totalCost += estimateCost("gpt-4o-2024-11-20", polishRes.usage);
 
     // ── Pass 2: Post-polish rescue if polish trimmed too much ─────────────
     const postPolishWords = polishRes.text.split(/\s+/).length;
@@ -738,12 +747,35 @@ function qualityGate(article) {
     if (stale >= 3) issues.push(`stale year refs: ${stale}× 2024/2025 in body`);
   }
 
-  // AI tells (blocking)
+  // AI tells (blocking) — the hard set is identity reveal (AI/LM
+  // admission), always rejected. The soft set is filler phrasing the
+  // polish step is supposed to scrub; we don't reject on individual
+  // hits (they leak through occasionally) but flag if 5+ accumulate,
+  // which signals the polish step didn't clean the draft and we'd
+  // ship slop. Threshold tuned conservative — false positives are
+  // cheap (just regenerate), false negatives ship junk.
   const aiTellsHard = [
     /\b(?:as an AI|I cannot|as a language model|I'm an AI|I am an AI)\b/i,
     /\b(?:I don't have personal|in my training data)\b/i,
   ];
   if (aiTellsHard.some((re) => re.test(md))) issues.push("AI-tell in body");
+
+  const aiTellsSoft = [
+    /\bwhen it comes to\b/i,
+    /\bwhether you'?re\b/i,
+    /\bin (?:the |today's )?(?:fast-paced|digital|modern) world\b/i,
+    /\bin the (?:realm|world|landscape|ecosystem) of\b/i,
+    /\blet'?s (?:dive|explore|take a look|delve)\b/i,
+    /\b(?:revolutioniz|game[- ]chang|cutting[- ]edge|seamless(?:ly)?|harness the power)\b/i,
+    /\b(?:unlock the (?:full )?potential|elevate your)\b/i,
+    /\bit'?s (?:important|worth) (?:to note|noting)\b/i,
+    /\bdelve into\b/i,
+  ];
+  const softHits = aiTellsSoft.reduce((sum, re) => {
+    const m = md.match(new RegExp(re.source, re.flags + "g"));
+    return sum + (m ? m.length : 0);
+  }, 0);
+  if (softHits >= 5) issues.push(`${softHits} AI-tell phrases (polish step didn't scrub)`);
 
   // Unfinished templates
   if (/\[AFFILIATE:[^\]]*\][^\[]*\[\/AFFILIATE\]/i.test(md)) {
@@ -1342,6 +1374,28 @@ async function publishAllDrafts(maxCount = 10) {
       // Prepend affiliate disclosure (FTC compliance)
       const disclosure = affiliateDisclosure();
       let html = disclosure + mdToHtml(article.content_markdown);
+
+      // ── Pre-publish HTML validator (defense in depth) ────────────────
+      // The qualityGate above checked the MARKDOWN. This validates the
+      // RENDERED HTML — catches bugs the markdown checks can't see, like
+      // the markdown fence + duplicate H1 incident that shipped to 13
+      // articles on 2026-05-25 before we noticed. If anything is wrong,
+      // refuse to publish and mark qa_failed with a clear reason.
+      const htmlIssues = validateRenderedHtml(html, article.title);
+      if (htmlIssues.length > 0) {
+        skippedCount++;
+        const issuesSummary = htmlIssues.join(", ");
+        console.log(`   ⏩ skip "${article.title.slice(0, 50)}": HTML issues — ${issuesSummary}`);
+        await supa("PATCH", `articles?id=eq.${article.id}`, {
+          status: "qa_failed",
+          quality_score: 0,
+        }).catch(() => {});
+        notifyAlert(
+          `🚫 **HTML validator blocked publish:** ${article.title.slice(0, 70)}\n\n**Issues:** ${issuesSummary}\n\nThis is the post-render check that catches what the markdown qualityGate misses. Inspect the article markdown and either fix the generation prompt or run \`fix-stale-html\` after manual cleanup.`,
+          "warning"
+        ).catch(() => {});
+        continue;
+      }
 
       // Enhance comparison tables with richer styling
       if (article.article_type === 'comparison' || article.article_type === 'list') {
