@@ -494,11 +494,24 @@ Rules:
 4. At first mention of a product, wrap it: [AFFILIATE:brand_name_lowercase]Product Name[/AFFILIATE]
 5. Add a '> **Quick Verdict:**' blockquote at the very top (before the intro) — 2-3 sentences with a clear recommendation.
 6. Add a '**Key Takeaways**' bullet list right after the Quick Verdict.
-7. AVOID AI-tells: "in today's fast-paced world", "it's important to note", "let's dive in", "revolutionary", "game-changer", "seamless", "cutting-edge", "unlock", "harness the power".
+7. AVOID AI-tells: "in today's fast-paced world", "it's important to note", "let's dive in", "revolutionary", "game-changer", "seamless", "cutting-edge", "unlock", "harness the power", "when it comes to", "delve into", "let's explore", "elevate your".
 8. Use 2nd person ("you"), active voice, contractions OK.
 9. ⚠️ MINIMUM 2000 WORDS — this is non-negotiable. Short sections must be expanded with examples.
 10. Cover EVERY section from the outline fully. DO NOT skip sections or write one-liners.
 11. End with a full "## FAQ" section answering all ${(outline.faqs || []).length} questions in detail (each answer min 3 sentences).
+12. ⭐ CITATION CAPSULE (GEO/AEO requirement): EVERY H2 section (except FAQ) MUST end with a "Key fact" blockquote — exactly this format:
+
+> **Key fact (as of April 2026):** [One factual, citable sentence with a specific number, date, comparison, or claim that an AI search engine like ChatGPT, Perplexity, or Google AI Overview would quote verbatim. Must be standalone — no pronouns like "this" or "that" referring to context above.]
+
+   Good example:
+   > **Key fact (as of April 2026):** Jasper AI's Boss Mode starts at $59/month billed annually, with a 5-day free trial. The Business tier adds SSO and custom personas starting at $499/month for 5 seats.
+
+   Bad example (do NOT do this):
+   > **Key fact:** This tool is the best for content creation. [too vague, no number/date, uses "this"]
+
+   These callouts are what AI search engines extract as citation passages. Without them, our articles are invisible to ChatGPT/Perplexity even if they rank #1 in Google. EVERY H2 needs one — no exceptions except the FAQ section.
+
+13. DO NOT wrap your output in code fences (\`\`\`markdown ... \`\`\`). Output ONLY raw markdown body. Start with the # H1 heading directly.
 
 Output: pure markdown. Start with # H1. No commentary before or after.`,
       16000
@@ -572,9 +585,10 @@ STRICT RULES:
 5. Ensure every tool has both pros AND cons stated clearly
 6. Keep all [AFFILIATE:...] tags EXACTLY as-is (don't touch them)
 7. Keep all markdown structure: headings, tables, bullet lists, numbered lists, blockquotes
-8. MINIMUM output: ${Math.max(polishWords - 50, 1800)} words (you started with ${polishWords} — DO NOT go below this)
-9. Output: the complete revised markdown only — start with # heading, no commentary
-10. DO NOT wrap your output in code fences (\`\`\`markdown ... \`\`\`). Output ONLY raw markdown.`,
+8. CRITICAL: Keep "> **Key fact (as of {month year}):** ..." blockquotes EXACTLY as written. These are Citation Capsules — AI search engines extract them verbatim. Do not paraphrase, shorten, or remove them. Every H2 should have one.
+9. MINIMUM output: ${Math.max(polishWords - 50, 1800)} words (you started with ${polishWords} — DO NOT go below this)
+10. Output: the complete revised markdown only — start with # heading, no commentary
+11. DO NOT wrap your output in code fences (\`\`\`markdown ... \`\`\`). Output ONLY raw markdown.`,
       finalDraftText,
       16000
     );
@@ -824,6 +838,31 @@ function qualityGate(article) {
   // Heading sanity: must have at least 5 ## headings (proper structure for 2000+ word article)
   const h2Count = (md.match(/^##\s+/gm) || []).length;
   if (h2Count < 5) issues.push(`only ${h2Count} H2 headings (min 5)`);
+
+  // Citation Capsule coverage (GEO/AEO requirement — see brainstorm A10).
+  // Every H2 should end with a "Key fact" blockquote so AI search engines
+  // have a citable passage to extract. We count how many H2 sections have
+  // one and warn if coverage is below 60% (excluding FAQ — that section
+  // legitimately doesn't need a Key fact since the questions ARE the
+  // citables). Non-blocking flag because the prompt is new and GPT may
+  // ignore it occasionally on the first rollout; we'll harden once
+  // baseline coverage is established.
+  const sections = md.split(/^##\s+/gm).slice(1); // drop the pre-first-H2 chunk
+  let citableSections = 0;
+  let countedSections = 0;
+  for (const s of sections) {
+    const firstLine = (s.split("\n")[0] || "").toLowerCase();
+    if (/^(faq|frequently asked|common questions)/i.test(firstLine)) continue;
+    countedSections++;
+    if (/^>\s*\*\*Key fact\b/im.test(s)) citableSections++;
+  }
+  if (countedSections > 0) {
+    const coverage = citableSections / countedSections;
+    if (coverage < 0.6) {
+      // Soft flag — log only, doesn't block publish yet
+      console.log(`   ℹ️  Citation Capsule coverage: ${citableSections}/${countedSections} H2s (${(coverage * 100).toFixed(0)}%) — target ≥60%`);
+    }
+  }
 
   // Keyword density: primary keyword must appear at least once, OR ≥70% of meaningful words present
   // Long-tail keywords like "best ai tools for image enhancement 2026" rarely appear verbatim;
