@@ -1,0 +1,76 @@
+name: AI Citations Check (Perplexity probe)
+
+# Weekly probe of Perplexity to see if aipickd.com gets cited in AI
+# search responses for our target keywords. This is the feedback loop
+# for the Citation Capsule rollout (PR #23). Without measurement, we
+# can't tell whether the > **Key fact** callouts are actually being
+# picked up by AI search engines.
+#
+# Cost: ~$0.10 per weekly run (20 queries × $0.005). Approved budget
+# bumps in the brainstorm doc.
+
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "Max queries to probe (default 20)"
+        required: false
+        default: "20"
+      dry_run:
+        description: "Dry-run only (no DB writes, no Discord)"
+        required: false
+        default: "false"
+        type: choice
+        options: ["false", "true"]
+  schedule:
+    # Sundays at 17:00 UTC (11am CDMX) — same window as quality-report
+    - cron: "0 17 * * 0"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aipickd-ai-citations
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup AIPickd environment
+        uses: ./.github/actions/setup-env
+        with:
+          supabase-url: ${{ secrets.SUPABASE_URL }}
+          supabase-service-role-key: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          wp-username: ${{ secrets.WP_USERNAME }}
+          wp-admin-password: ${{ secrets.WP_ADMIN_PASSWORD }}
+          discord-webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          discord-webhook-articulos: ${{ secrets.DISCORD_WEBHOOK_ARTICULOS }}
+          discord-webhook-pipeline: ${{ secrets.DISCORD_WEBHOOK_PIPELINE }}
+          discord-webhook-alertas: ${{ secrets.DISCORD_WEBHOOK_ALERTAS }}
+
+      - name: Run AI Citations Probe
+        env:
+          PERPLEXITY_API_KEY: ${{ secrets.PERPLEXITY_API_KEY }}
+          LIMIT: ${{ github.event.inputs.limit || '20' }}
+          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+        run: |
+          if [ -z "${PERPLEXITY_API_KEY:-}" ]; then
+            echo "❌ PERPLEXITY_API_KEY secret not configured."
+            echo "   Add it in Settings → Secrets and re-run."
+            echo "   Get a key at: https://perplexity.ai/settings/api"
+            exit 1
+          fi
+          ARGS="--limit $LIMIT"
+          if [ "$DRY_RUN" != "true" ]; then ARGS="$ARGS --go"; fi
+          echo "Running: node scripts/check-ai-citations.js $ARGS"
+          node scripts/check-ai-citations.js $ARGS
