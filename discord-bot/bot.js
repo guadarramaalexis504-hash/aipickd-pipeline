@@ -437,6 +437,75 @@ function shouldRespond(message) {
   return AUTO_RESPOND_KEYWORDS.some((kw) => chName.includes(kw));
 }
 
+// ── Auto-thread on critical alerts ────────────────────────────────────────────
+// When notify.js posts a CRITICAL or HIGH alert via webhook to #alertas, we
+// pick it up here (webhook messages have message.author.bot === true but
+// crucially `webhookId` is set), create a Discord thread under the alert,
+// and seed the thread with a Claude-generated "suggested fix" so Alexis can
+// debug in-thread instead of scrolling history. This turns a debug session
+// from "go to #alertas, read, scroll, find context" into "open thread, read
+// summary, act."
+const ALERT_CHANNEL_KEYWORDS = ['alertas', 'alerts'];
+const ALERT_SEVERITY_INDICATORS = ['🚨', '🟠', 'CRITICAL', 'HIGH']; // skip warning/info
+
+function isAlertMessage(message) {
+  if (!message.webhookId) return false;
+  const chName = message.channel.name?.toLowerCase() || '';
+  if (!ALERT_CHANNEL_KEYWORDS.some((kw) => chName.includes(kw))) return false;
+  // Pull text from embed title + description (notify.js puts severity in title)
+  const embed = message.embeds?.[0];
+  const probe = `${embed?.title || ''} ${embed?.description || ''} ${message.content || ''}`;
+  return ALERT_SEVERITY_INDICATORS.some((s) => probe.includes(s));
+}
+
+async function suggestFixViaClaude(alertText) {
+  try {
+    const res = await anthropic.messages.create({
+      model: MODEL,
+      max_tokens: 600,
+      system: `Eres reliability engineer de AIPickd. Te llega una alerta. Tu trabajo: 1-2 frases describiendo qué probablemente está pasando, y 2-3 acciones concretas que Alexis puede ejecutar AHORA. Sé directo, sin filler. Si la alerta es ambigua, di qué info falta. Idioma: español mexicano casual.`,
+      messages: [{ role: 'user', content: `Alert recibida:\n\n${alertText.slice(0, 2000)}` }],
+    });
+    return res.content.find((b) => b.type === 'text')?.text || '(Claude sin respuesta)';
+  } catch (e) {
+    return `(No pude generar sugerencia: ${e.message.slice(0, 120)})`;
+  }
+}
+
+async function handleAlertMessage(message) {
+  try {
+    // Skip if thread already exists (re-handling same alert on bot restart)
+    if (message.hasThread) return;
+
+    const embed = message.embeds?.[0];
+    const alertTitle = embed?.title || 'Alerta';
+    const alertDesc  = embed?.description || message.content || '(sin descripción)';
+    const threadName = (`🔥 ${alertTitle}`).replace(/[^\w\s🔥🚨🟠⚠️ñáéíóú-]/gi, '').slice(0, 100);
+
+    const thread = await message.startThread({
+      name: threadName,
+      autoArchiveDuration: 1440, // 24h
+      reason: 'AIPickd auto-debug thread for critical alert',
+    });
+
+    // Drop a placeholder so the thread isn't empty while Claude thinks
+    const seedMsg = await thread.send('🤖 Analizando la alerta, dame 2-3 segundos...');
+
+    const suggestion = await suggestFixViaClaude(`${alertTitle}\n\n${alertDesc}`);
+    const replyChunks = [
+      `**🛠 Suggested fix (Claude):**\n${suggestion}`,
+      `\n_Tip: usa \`/status\`, \`/audit slug:"X"\`, o pregúntame aquí para más context._`,
+    ];
+    await seedMsg.edit(replyChunks.join('\n')).catch(async () => {
+      // edit failed (message too old, perms, etc) — just send a new one
+      await thread.send(replyChunks.join('\n')).catch(() => {});
+    });
+    console.log(`[auto-thread] created thread for alert: ${threadName.slice(0, 60)}`);
+  } catch (e) {
+    console.error('[auto-thread] failed:', e.message);
+  }
+}
+
 function stripMention(text) {
   return text.replace(/<@!?\d+>/g, '').trim() || '👋';
 }
@@ -542,6 +611,14 @@ discord.on(Events.InteractionCreate, async (interaction) => {
 });
 
 discord.on(Events.MessageCreate, async (message) => {
+  // Auto-thread on critical alerts runs BEFORE the normal shouldRespond
+  // gate because alert messages come from webhooks (author.bot === true)
+  // which shouldRespond rejects. We want webhooks for this specific path.
+  if (isAlertMessage(message)) {
+    handleAlertMessage(message); // fire-and-forget so we don't block other events
+    return;
+  }
+
   if (!shouldRespond(message)) return;
 
   const content = stripMention(message.content);
