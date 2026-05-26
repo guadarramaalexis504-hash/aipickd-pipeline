@@ -44,11 +44,13 @@ const {
 } = require('./supabase');
 const { triggerPipelineRun, getLatestRuns, dispatchWorkflow } = require('./github');
 const { registerSlashCommands, formatResult } = require('./slash-commands');
+const { startProactive } = require('./proactive');
 
 // ── Config ────────────────────────────────────────────────────────────────────
 const DISCORD_TOKEN   = process.env.DISCORD_BOT_TOKEN;
 const DISCORD_CLIENT_ID = process.env.DISCORD_CLIENT_ID; // for slash command registration
 const DISCORD_GUILD_ID  = process.env.DISCORD_GUILD_ID;  // optional, dev-mode faster
+const PROACTIVE_CHANNEL_ID = process.env.PROACTIVE_CHANNEL_ID; // channel for proactive alerts
 const ANTHROPIC_KEY   = process.env.ANTHROPIC_API_KEY;
 const MODEL           = process.env.ANTHROPIC_MODEL || 'claude-opus-4-5';
 const MAX_HISTORY     = 20;   // mensajes por canal que recuerda
@@ -602,6 +604,30 @@ discord.once(Events.ClientReady, async (c) => {
     }
   } catch (e) {
     console.error(`   Slash command registration failed: ${e.message}`);
+  }
+
+  // ── Proactive monitoring loop ──────────────────────────────────────
+  // Posts heads-up alerts when cost creeps up, pipeline idles, or queue
+  // drains. Skipped silently if no PROACTIVE_CHANNEL_ID is configured —
+  // the bot is still useful without it, this is just a "nice to have"
+  // layer that turns it from reactive into cofounder-mode.
+  if (!PROACTIVE_CHANNEL_ID) {
+    console.log(`   Proactive monitoring: SKIPPED (PROACTIVE_CHANNEL_ID not set)`);
+  } else {
+    startProactive({
+      getStats,
+      getPipelineHealth,
+      getMonthlyCost,
+      sendAlert: async (alert) => {
+        const channel = await c.channels.fetch(PROACTIVE_CHANNEL_ID).catch(() => null);
+        if (!channel) {
+          console.error(`[proactive] channel ${PROACTIVE_CHANNEL_ID} not found / not accessible`);
+          return;
+        }
+        await channel.send(alert.text);
+      },
+    });
+    console.log(`   Proactive monitoring: ACTIVE (channel ${PROACTIVE_CHANNEL_ID}, interval 1h, dedup 6h)`);
   }
 });
 
