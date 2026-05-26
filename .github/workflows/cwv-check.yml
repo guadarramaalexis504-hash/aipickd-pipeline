@@ -1,0 +1,83 @@
+name: Core Web Vitals Check (CrUX)
+
+# Weekly CrUX probe to track Largest Contentful Paint, Interaction to Next
+# Paint, and Cumulative Layout Shift for our top articles. These are
+# direct ranking signals Google uses — regressions need eyeballs fast.
+#
+# Cost: $0. CrUX API is free with a Google Cloud API key.
+
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "Max URLs to probe (default 20)"
+        required: false
+        default: "20"
+      url:
+        description: "Probe a single URL (overrides limit)"
+        required: false
+        default: ""
+      dry_run:
+        description: "Dry-run only (no DB writes, no Discord)"
+        required: false
+        default: "false"
+        type: choice
+        options: ["false", "true"]
+  schedule:
+    # Mondays 16:00 UTC — same window as quality-report so the report
+    # can include CWV data downstream.
+    - cron: "0 16 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aipickd-cwv-check
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup AIPickd environment
+        uses: ./.github/actions/setup-env
+        with:
+          supabase-url: ${{ secrets.SUPABASE_URL }}
+          supabase-service-role-key: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          wp-username: ${{ secrets.WP_USERNAME }}
+          wp-admin-password: ${{ secrets.WP_ADMIN_PASSWORD }}
+          discord-webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          discord-webhook-articulos: ${{ secrets.DISCORD_WEBHOOK_ARTICULOS }}
+          discord-webhook-pipeline: ${{ secrets.DISCORD_WEBHOOK_PIPELINE }}
+          discord-webhook-alertas: ${{ secrets.DISCORD_WEBHOOK_ALERTAS }}
+
+      - name: Run CWV probe
+        env:
+          CRUX_API_KEY: ${{ secrets.CRUX_API_KEY }}
+          LIMIT: ${{ github.event.inputs.limit || '20' }}
+          URL_INPUT: ${{ github.event.inputs.url || '' }}
+          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+        run: |
+          if [ -z "${CRUX_API_KEY:-}" ]; then
+            echo "❌ CRUX_API_KEY secret not configured."
+            echo "   Get one free at console.cloud.google.com → APIs → Chrome UX Report API"
+            exit 1
+          fi
+          ARGS=""
+          if [ "$DRY_RUN" != "true" ]; then ARGS="--go"; fi
+          if [ -n "$URL_INPUT" ]; then
+            ARGS="$ARGS --url $URL_INPUT"
+          else
+            ARGS="$ARGS --limit $LIMIT"
+          fi
+          echo "Running: node scripts/check-cwv.js $ARGS"
+          node scripts/check-cwv.js $ARGS
