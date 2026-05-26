@@ -26,6 +26,30 @@ const { loadEnv } = require("./lib/env");
 const { fetchWithRetry } = require("./lib/http");
 const { publishKey: idempotencyPublishKey } = require("./lib/idempotency");
 const { validateRenderedHtml } = require("./lib/html-validator");
+const { ping: hcPing } = require("./lib/heartbeat");
+
+/**
+ * Granular healthcheck — pings a per-step HEALTHCHECK_URL_<STEP> if
+ * configured. Lets us see in healthchecks.io WHICH stage the pipeline
+ * got far enough to ping, narrowing diagnosis when a cron run dies
+ * silently mid-flight. Fire-and-forget: heartbeat failures don't
+ * block the pipeline.
+ *
+ * Set these in GitHub Secrets to enable (each is OPTIONAL — missing
+ * vars just skip the ping for that step):
+ *   HEALTHCHECK_URL_PIPELINE_OUTLINE     — set after outline JSON is parsed
+ *   HEALTHCHECK_URL_PIPELINE_DRAFT       — set after draft text returned
+ *   HEALTHCHECK_URL_PIPELINE_POLISH      — set after polish step
+ *   HEALTHCHECK_URL_PIPELINE_PUBLISH     — set after publishAllDrafts loop
+ *   HEALTHCHECK_URL_PIPELINE_POSTSTEPS   — set after internal-links etc
+ */
+async function hcStep(stepName, opts = {}) {
+  try {
+    await hcPing(`PIPELINE_${stepName}`, opts);
+  } catch (_) {
+    // never block on heartbeat failures
+  }
+}
 
 const env = loadEnv();
 
@@ -467,12 +491,19 @@ Return a JSON object with keys: title (50-60 chars, includes keyword and "2026")
       // Save outline to cache — if draft fails later, next run will reuse it
       saveOutlineCache(kw.id, outline);
     }
+    // Healthcheck: outline complete. If the pipeline dies after this point,
+    // we'll see OUTLINE pinged but DRAFT not — instantly narrowing the
+    // post-mortem to the draft generation step.
+    hcStep("OUTLINE", { message: `keyword="${kw.keyword}"` });
 
     // Draft — explicit 2000+ word requirement with section-level guidance
     const sectionTargets = (outline.sections || [])
       .map((s, i) => `Section ${i + 1} "${s.heading}": write ~${s.word_target || 250} words`)
       .join("\n");
 
+    // Mark we're about to spend the most-expensive call so the heartbeat
+    // tells us whether the cron died before or after this $$.
+    hcStep("DRAFT_START", { state: "start" });
     const draftRes = await gpt(
       "gpt-4o-2024-11-20",
       "You are a world-class technical writer for AI tools reviews. Style: clear, punchy, authoritative. Think Wirecutter meets a smart tech friend. The current date is April 2026 — all references must reflect this.",
@@ -517,6 +548,8 @@ Output: pure markdown. Start with # H1. No commentary before or after.`,
       16000
     );
     totalCost += estimateCost("gpt-4o-2024-11-20", draftRes.usage);
+    // Draft returned successfully (most expensive single call).
+    hcStep("DRAFT", { message: `words≈${(draftRes.text || "").split(/\s+/).length}` });
 
     // ── Expansion helper (reusable) ──────────────────────────────────────────
     const runExpansionPass = async (text, currentWords, targetWords = 2600) => {
@@ -593,6 +626,8 @@ STRICT RULES:
       16000
     );
     totalCost += estimateCost("gpt-4o-2024-11-20", polishRes.usage);
+    // Polish done — past the most-risky regression zone (length trim).
+    hcStep("POLISH", { message: `polished_words=${polishRes.text.split(/\s+/).length}` });
 
     // ── Pass 2: Post-polish rescue if polish trimmed too much ─────────────
     const postPolishWords = polishRes.text.split(/\s+/).length;
@@ -1759,6 +1794,9 @@ function startSoftTimeoutWarning(label = "pipeline") {
     published = res.count;
     skipped = res.skipped || 0;
     console.log(`   Published ${published} drafts, skipped ${skipped} (failed QA)\n`);
+    // Publishing loop done — distinguishes "WP path broke" from "post-
+    // publish hooks broke" in healthchecks dashboard.
+    hcStep("PUBLISH", { message: `published=${published} skipped=${skipped}` });
 
     // Alert Discord if QA failures are accumulating
     if (skipped > 3) {
@@ -1841,6 +1879,11 @@ function startSoftTimeoutWarning(label = "pipeline") {
     const archivedCount = Array.isArray(archived) ? archived.length : 0;
     if (archivedCount > 0) console.log(`🗄️  Archived ${archivedCount} old qa_failed articles`);
   } catch {}
+
+  // All post-publish hooks ran. Final granular ping — if this is missing
+  // but PUBLISH was hit, we know the failure is in poststeps (sitemap,
+  // indexnow, internal-links, etc), not in the publish path itself.
+  hcStep("POSTSTEPS");
 
   // --- Pipeline run summary Discord embed ---
   const secs = ((Date.now() - runStart) / 1000).toFixed(1);

@@ -140,6 +140,20 @@ into the runner via `GITHUB_ENV` (multiline-safe heredoc form), and
 | `WP_USERNAME` | publish, weekly-health | WP REST auth |
 | `WP_ADMIN_PASSWORD` | publish, weekly-health | WP Application Password (24-char) |
 | `DISCORD_WEBHOOK_*` | notify | 4 Discord channels |
+| `HEALTHCHECK_URL_GENERATE` | generate workflow | overall workflow heartbeat (optional) |
+| `HEALTHCHECK_URL_PIPELINE_OUTLINE` | run-pipeline.js | per-step heartbeat after outline (optional) |
+| `HEALTHCHECK_URL_PIPELINE_DRAFT_START` | run-pipeline.js | "start" ping before draft call (optional) |
+| `HEALTHCHECK_URL_PIPELINE_DRAFT` | run-pipeline.js | after draft returned (optional) |
+| `HEALTHCHECK_URL_PIPELINE_POLISH` | run-pipeline.js | after polish step (optional) |
+| `HEALTHCHECK_URL_PIPELINE_PUBLISH` | run-pipeline.js | after WP publish loop (optional) |
+| `HEALTHCHECK_URL_PIPELINE_POSTSTEPS` | run-pipeline.js | after sitemap/indexnow/links (optional) |
+| `PERPLEXITY_API_KEY` | ai-citations-check | weekly GEO/AEO probe (optional, ~$5/mo) |
+| `CRUX_API_KEY` | cwv-check | weekly Core Web Vitals probe (optional, free) |
+
+All `HEALTHCHECK_URL_PIPELINE_*` vars are optional. Set the ones you
+care about in healthchecks.io and Set GitHub Secrets — the rest just
+silently no-op. Granular heartbeats let you see in healthchecks.io
+WHICH stage of the pipeline died when a cron run goes silent.
 
 ## Cost controls
 
