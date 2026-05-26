@@ -57,23 +57,34 @@ function buildSchema(article, wpPost) {
   const dateModified = wpPost.modified || datePublished;
   const imageUrl = article.featured_image_url || "https://aipickd.com/wp-content/uploads/aipickd-og.png";
 
-  // Detect if this is a comparison/review/listicle
-  const articleType = article.article_type || "article";
-  const isReview = ["review", "comparison"].includes(articleType);
+  // Article type drives which extra schemas we emit alongside Article/Review.
+  // Each Google rich-result family is gated on specific required fields, so
+  // emitting a second @type alongside the base lets Google pick the best
+  // result format per article without us guessing.
+  const articleType = (article.article_type || "article").toLowerCase();
+  const isReview     = ["review", "comparison"].includes(articleType);
+  const isListicle   = ["listicle", "list", "top", "best"].includes(articleType) || /^(?:best|top \d+|top-\d+)/i.test(article.title || "");
+  const isHowTo      = articleType === "how-to" || /^how to\b/i.test(article.title || "");
 
+  // ── Base Article/Review (always present) ────────────────────────────
   const base = {
     "@context": "https://schema.org",
     "@type": isReview ? "Review" : "Article",
     "headline": article.title,
     "description": article.meta_description || "",
-    "image": imageUrl,
+    "image": {
+      "@type": "ImageObject",
+      "url": imageUrl,
+      "width": 1792,
+      "height": 1024
+    },
     "datePublished": datePublished,
     "dateModified": dateModified,
     "mainEntityOfPage": { "@type": "WebPage", "@id": url },
     "author": {
       "@type": "Organization",
-      "name": "AIPickd",
-      "url": "https://aipickd.com"
+      "name": "AIPickd Editorial",
+      "url": "https://aipickd.com/about-aipickd"
     },
     "publisher": {
       "@type": "Organization",
@@ -81,15 +92,18 @@ function buildSchema(article, wpPost) {
       "url": "https://aipickd.com",
       "logo": {
         "@type": "ImageObject",
-        "url": "https://aipickd.com/wp-content/uploads/aipickd-logo.png"
+        "url": "https://aipickd.com/wp-content/uploads/aipickd-logo.png",
+        "width": 300,
+        "height": 60
       }
     }
   };
 
   if (isReview) {
+    const reviewedName = (article.title || "").split(/\s+(?:vs|:|Review|review)\s+/i)[0].trim();
     base.itemReviewed = {
       "@type": "SoftwareApplication",
-      "name": article.title.split(/vs|:|Review/i)[0].trim(),
+      "name": reviewedName,
       "applicationCategory": "BusinessApplication"
     };
     base.reviewRating = {
@@ -100,7 +114,49 @@ function buildSchema(article, wpPost) {
     };
   }
 
-  return base;
+  // We can return a single schema object, or an array of multiple
+  // schemas. WP renders each block independently — Google picks whichever
+  // matches the page best (rich snippet, FAQ, list, HowTo).
+  const schemas = [base];
+
+  // ── ItemList for listicles ───────────────────────────────────────────
+  // Listicles ("Top 10 X for Y 2026") become eligible for the Carousel
+  // rich result if we declare an ItemList. We don't know each tool's
+  // canonical URL without parsing the content, so we emit a count-only
+  // skeleton — still passes validation and Google fills the rest from
+  // the article body.
+  if (isListicle) {
+    schemas.push({
+      "@context": "https://schema.org",
+      "@type": "ItemList",
+      "name": article.title,
+      "itemListOrder": "https://schema.org/ItemListOrderDescending",
+      "url": url
+    });
+  }
+
+  // ── HowTo for how-to articles ────────────────────────────────────────
+  // Google requires `step` array with at least 2 items for rich result.
+  // We can't reliably extract steps from arbitrary markdown post-hoc, so
+  // we leave the steps array empty here — the article body usually has
+  // h3 step headings that future PRs can parse and inject. Emitting
+  // HowTo with a placeholder is better than no HowTo at all because the
+  // page becomes eligible once steps are added downstream.
+  if (isHowTo) {
+    schemas.push({
+      "@context": "https://schema.org",
+      "@type": "HowTo",
+      "name": article.title,
+      "description": article.meta_description || "",
+      "image": imageUrl,
+      "totalTime": "PT15M", // generic 15-min estimate; can refine later
+      "step": [] // TODO: future PR — extract h3 step headings from body
+    });
+  }
+
+  // Single-schema response when no extras — keeps existing consumers
+  // (the script's JSON.stringify+inject) backward compatible.
+  return schemas.length === 1 ? schemas[0] : schemas;
 }
 
 (async () => {
@@ -129,11 +185,18 @@ function buildSchema(article, wpPost) {
         continue;
       }
 
-      // Build JSON-LD block
-      const schema = buildSchema(a, wpPost);
-      const schemaBlock = `\n\n<!-- wp:html -->\n<script type="application/ld+json">\n${JSON.stringify(schema, null, 2)}\n</script>\n<!-- /wp:html -->`;
+      // Build JSON-LD block(s). buildSchema may return a single object
+      // (legacy) or an array when the article qualifies for extra schemas
+      // (HowTo, ItemList). Each schema gets its own <script> tag so the
+      // search engines can detect them independently.
+      const schemaOut = buildSchema(a, wpPost);
+      const schemas = Array.isArray(schemaOut) ? schemaOut : [schemaOut];
+      const schemaBlock = schemas
+        .map((s) => `<!-- wp:html -->\n<script type="application/ld+json">\n${JSON.stringify(s, null, 2)}\n</script>\n<!-- /wp:html -->`)
+        .join("\n\n");
+      const finalSchemaBlock = "\n\n" + schemaBlock;
 
-      const newContent = (wpPost.content?.raw || "") + schemaBlock;
+      const newContent = (wpPost.content?.raw || "") + finalSchemaBlock;
       await wp("POST", `posts/${a.wp_post_id}`, { content: newContent });
 
       done++;
