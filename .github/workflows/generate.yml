@@ -112,6 +112,24 @@ jobs:
         continue-on-error: true
         run: node scripts/backfill-images.js --limit 3
 
+      # Self-healing categorization: ~66 posts sit in "Uncategorized". Idempotent
+      # (skips already-correct posts), so this safely converges to zero in ~1 day
+      # without any manual dispatch. Runs BEFORE schema so breadcrumbs get the cat.
+      - name: Categorize uncategorized posts (gradual)
+        id: post-categorize
+        continue-on-error: true
+        run: node scripts/categorize-posts.js --limit 15
+
+      # Self-healing schema (add-only): ~65 posts had no JSON-LD because schema was
+      # coupled to image gen. add-only adds fresh schema (breadcrumb + stars) to
+      # those missing it, skipping posts that already have it. Converges in ~3 days.
+      # (The manual "SEO Backfill" workflow with --upgrade refreshes the older 52
+      #  too — this gradual step just guarantees no article stays schema-less.)
+      - name: Backfill missing schema (gradual, add-only)
+        id: post-schema
+        continue-on-error: true
+        run: node scripts/add-schema-markup.js --limit 5
+
       - name: Auto-refill keyword queue (if < 50 keywords)
         id: post-keywords
         continue-on-error: true
