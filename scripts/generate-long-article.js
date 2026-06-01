@@ -201,7 +201,7 @@ TITLE ENGINEERING (CRITICAL for CTR):
 - MUST use at least ONE hook: brackets [Free]/[Tested]/[Honest], numbers, power words (Best, Proven, Honest, Worth It), or curiosity (Which Wins?, Worth It?)
 - NEVER flat titles like "Best AI Tools 2026" — use "7 Best AI Tools That Actually Work [2026]"
 
-Return JSON with: title (50-60 chars, high-CTR as above), slug (kebab-case with 2026), meta_description (150-160 chars, benefit + curiosity hook), primary_keyword, lsi_keywords (array 5-7), target_word_count, sections (array of 6-8 objects each with: heading, level, bullets array 3-5, word_target number ~300), faqs (array of 5 question strings), internal_link_ideas (array).`,
+Return JSON with: title (50-60 chars, high-CTR as above), slug (kebab-case with 2026), meta_description (150-160 chars, MUST follow these CTR rules: start with a benefit/result NOT "In this article" or "Learn about", include primary keyword in first 80 chars, end with curiosity hook or CTA like "See the results" or "Find out which wins", use a number or specific detail when possible. Example: "We tested 7 AI writing tools head-to-head. Here's which one actually delivers for small businesses in 2026."), primary_keyword, lsi_keywords (array 5-7), target_word_count, sections (array of 6-8 objects each with: heading, level, bullets array 3-5, word_target number ~300), faqs (array of 5 question strings), internal_link_ideas (array).`,
       2500,
       true
     );

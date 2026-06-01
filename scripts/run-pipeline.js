@@ -499,7 +499,7 @@ TITLE ENGINEERING (this is CRITICAL for CTR — a boring title = zero clicks):
 - Good: "7 Best AI Writing Tools That Actually Work [2026]"
 - Bad: "Best AI Writing Tools 2026"
 
-Return a JSON object with keys: title (50-60 chars, high-CTR formula as described above), slug (kebab-case with "2026"), meta_description (150-160 chars, mentions 2026, includes a benefit + curiosity hook), primary_keyword, lsi_keywords (array of 5-7), target_word_count (must be 3000), article_type, sections (array of AT LEAST 10 objects with: heading, level, bullets array of 4-6 items, word_target number >= 250), faqs (array of 6 question strings), internal_link_ideas (array of strings).`,
+Return a JSON object with keys: title (50-60 chars, high-CTR formula as described above), slug (kebab-case with "2026"), meta_description (150-160 chars, MUST follow these CTR rules: start with a benefit/result NOT "In this article" or "Learn about", include primary keyword in first 80 chars, end with curiosity hook or CTA like "See the results" or "Find out which wins", use a number or specific detail when possible. Example: "We tested 7 AI writing tools head-to-head. Here's which one actually delivers for small businesses in 2026."), primary_keyword, lsi_keywords (array of 5-7), target_word_count (must be 3000), article_type, sections (array of AT LEAST 10 objects with: heading, level, bullets array of 4-6 items, word_target number >= 250), faqs (array of 6 question strings), internal_link_ideas (array of strings).`,
         2500,
         true
       );
@@ -1116,8 +1116,11 @@ function buildSchemaBlock(article, wpLink, imageUrl) {
     });
   }
 
-  const schemaJson = blocks.length === 1 ? blocks[0] : blocks;
-  return `\n\n<!-- wp:html -->\n<script type="application/ld+json">\n${JSON.stringify(schemaJson, null, 2)}\n</script>\n<!-- /wp:html -->`;
+  // Each schema gets its own <script> tag so Google's rich-results parser
+  // detects them independently (more reliable than a single JSON array).
+  return "\n\n" + blocks
+    .map((s) => `<!-- wp:html -->\n<script type="application/ld+json">\n${JSON.stringify(s, null, 2)}\n</script>\n<!-- /wp:html -->`)
+    .join("\n\n");
 }
 
 // --- Enhanced comparison table HTML (richer styles for comparison articles) ---

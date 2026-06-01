@@ -51,6 +51,29 @@ async function wp(method, endpoint, body) {
   return text ? JSON.parse(text) : null;
 }
 
+// Extract Q&A pairs from a "## FAQ" section in markdown (mirrors run-pipeline.js)
+function extractFAQs(md) {
+  if (!md) return [];
+  const faqMatch = md.match(/^##\s+(?:FAQ|Frequently Asked Questions|Common Questions|FAQs).*$/im);
+  if (!faqMatch) return [];
+  const start = md.indexOf(faqMatch[0]) + faqMatch[0].length;
+  const rest = md.slice(start);
+  const endMatch = rest.match(/^##\s+/m);
+  const faqBlock = endMatch ? rest.slice(0, rest.indexOf(endMatch[0])) : rest;
+
+  const qas = [];
+  const headingPattern = /^###\s+(.+?)\n([\s\S]*?)(?=^###\s+|$)/gm;
+  let m;
+  while ((m = headingPattern.exec(faqBlock)) !== null) {
+    const q = m[1].trim().replace(/^\*\*|\*\*$/g, "").replace(/^Q:\s*/i, "");
+    const a = m[2].trim().replace(/^\*\*A:\*\*\s*/i, "").replace(/^A:\s*/i, "");
+    if (q && a && q.length < 200 && a.length > 20) {
+      qas.push({ q, a: a.slice(0, 600) });
+    }
+  }
+  return qas.slice(0, 8);
+}
+
 function buildSchema(article, wpPost) {
   const url = wpPost.link;
   const datePublished = wpPost.date || new Date().toISOString();
@@ -154,6 +177,22 @@ function buildSchema(article, wpPost) {
     });
   }
 
+  // ── FAQPage for articles with FAQ sections ──────────────────────────
+  // Google shows FAQ rich results (expandable Q&A) when ≥3 valid pairs
+  // are declared. We parse these from the markdown FAQ section.
+  const faqs = extractFAQs(article.content_markdown);
+  if (faqs.length >= 3) {
+    schemas.push({
+      "@context": "https://schema.org",
+      "@type": "FAQPage",
+      "mainEntity": faqs.map((f) => ({
+        "@type": "Question",
+        "name": f.q,
+        "acceptedAnswer": { "@type": "Answer", "text": f.a },
+      })),
+    });
+  }
+
   // Single-schema response when no extras — keeps existing consumers
   // (the script's JSON.stringify+inject) backward compatible.
   return schemas.length === 1 ? schemas[0] : schemas;
@@ -164,7 +203,7 @@ function buildSchema(article, wpPost) {
 
   const articles = await supa(
     "GET",
-    "articles?select=id,title,slug,wp_post_id,article_type,meta_description,featured_image_url&wp_post_id=not.is.null"
+    "articles?select=id,title,slug,wp_post_id,article_type,meta_description,featured_image_url,content_markdown&wp_post_id=not.is.null"
   );
 
   console.log(`Found ${articles.length} articles with WP posts.\n`);

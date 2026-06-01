@@ -24,7 +24,12 @@ Your task: Generate a detailed article outline for the following target keyword.
    - End with year: "2026" or "(2026)" or "[2026]"
    - Match article type: comparison="X vs Y: Which Wins?", review="X Review: Worth It? [Tested]", listicle="7 Best X [Free Options]"
    - BAD: "Best AI Writing Tools 2026" / GOOD: "7 Best AI Writing Tools That Actually Work [2026]"
-2. Meta description (150-160 chars) with keyword and a hook
+2. Meta description that DEMANDS the click (150-160 chars):
+   - Start with a benefit/result, NEVER "In this article..." or "Learn about..."
+   - Include primary keyword in first 80 chars
+   - End with curiosity hook or CTA: "See the results", "Find out which wins", "Here's what we found"
+   - Use numbers/specifics: "We tested 7 tools", "Prices start at $0"
+   - BAD: "Learn about the best AI writing tools in 2026" / GOOD: "We tested 7 AI writing tools head-to-head — one clear winner for small businesses in 2026"
 3. Table of contents with H2s and H3s
 4. Target reading intent: {{intent}} (informational/commercial/transactional)
 5. Include sections for: intro, main analysis, comparison table (if applicable), pros/cons, pricing breakdown, recommendations for different use cases, FAQs, conclusion
