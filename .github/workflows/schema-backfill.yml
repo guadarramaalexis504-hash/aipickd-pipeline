@@ -1,8 +1,10 @@
-name: "Schema Backfill (rich results)"
+name: "SEO Backfill (categories + rich results)"
 
-# Adds/upgrades Schema.org JSON-LD on existing published articles so Google can
-# show rich results (review stars, breadcrumb path, dates) → higher CTR.
-# Manual trigger only — this is a one-off / occasional maintenance job, not a cron.
+# Two-step SEO maintenance on existing published articles → higher CTR:
+#   1. Categorize uncategorized posts (deterministic, from each article's niche)
+#   2. Add/upgrade Schema.org JSON-LD (review stars, breadcrumb path, dates)
+# Categorization runs FIRST so breadcrumbs pick up the correct category.
+# Manual trigger only — a one-off / occasional maintenance job, not a cron.
 
 on:
   workflow_dispatch:
@@ -56,6 +58,17 @@ jobs:
           wp-admin-password: ${{ secrets.WP_ADMIN_PASSWORD }}
           discord-webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
           discord-webhook-pipeline: ${{ secrets.DISCORD_WEBHOOK_PIPELINE }}
+
+      - name: Categorize uncategorized posts
+        env:
+          LIMIT: ${{ github.event.inputs.limit }}
+          DRY_RUN: ${{ github.event.inputs.dry_run || 'true' }}
+        run: |
+          ARGS=""
+          if [ "$DRY_RUN" = "true" ]; then ARGS="$ARGS --dry-run"; fi
+          if [ -n "$LIMIT" ]; then ARGS="$ARGS --limit $LIMIT"; fi
+          echo "Running: node scripts/categorize-posts.js $ARGS"
+          node scripts/categorize-posts.js $ARGS
 
       - name: Run schema backfill
         env:
