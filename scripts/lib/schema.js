@@ -26,13 +26,12 @@
 
 const SITE = "https://aipickd.com";
 const ORG_NAME = "AIPickd";
-const LOGO = {
-  "@type": "ImageObject",
-  url: `${SITE}/wp-content/uploads/aipickd-logo.png`,
-  width: 600,
-  height: 60,
-};
-const DEFAULT_IMG = `${SITE}/wp-content/uploads/aipickd-og.png`;
+// Verified brand-asset URLs. Empty by design: the old hardcoded
+// /uploads/aipickd-logo.png & aipickd-og.png both 404, and a 404 in schema is
+// worse than omitting the field. To enable: upload a logo / default OG image to
+// WP Media, then paste the resulting URLs here (every article picks them up).
+const LOGO_URL = "";
+const DEFAULT_IMG = "";
 
 // WP category slug → display name (mirrors the live taxonomy)
 const CATEGORY_NAMES = {
@@ -198,16 +197,27 @@ function buildSchemas(article, opts = {}) {
     "@type": isReview ? "Review" : "Article",
     headline: (article.title || "").slice(0, 110),
     description: article.meta_description || "",
-    image: { "@type": "ImageObject", url: imageUrl || DEFAULT_IMG, width: 1200, height: 630 },
     datePublished,
     dateModified,
     mainEntityOfPage: { "@type": "WebPage", "@id": url },
     isAccessibleForFree: true,
     inLanguage: "en-US",
     wordCount,
-    author: { "@type": "Organization", name: ORG_NAME, url: SITE, logo: LOGO },
-    publisher: { "@type": "Organization", name: ORG_NAME, url: SITE, logo: LOGO },
+    author: { "@type": "Organization", name: ORG_NAME, url: SITE },
+    publisher: { "@type": "Organization", name: ORG_NAME, url: SITE },
   };
+  // Only attach an image when we have a REAL one. A 404 fallback is worse than
+  // omitting it (broken-image icon in social cards, schema validation warnings).
+  if (imageUrl) {
+    base.image = { "@type": "ImageObject", url: imageUrl, width: 1200, height: 630 };
+  }
+  // Attach the publisher logo only if a verified logo URL is configured (the
+  // old hardcoded aipickd-logo.png 404s). setup-brand-assets.js uploads a real
+  // one and records it; until then we omit the logo rather than emit a 404.
+  if (LOGO_URL) {
+    base.author.logo = { "@type": "ImageObject", url: LOGO_URL, width: 600, height: 60 };
+    base.publisher.logo = { "@type": "ImageObject", url: LOGO_URL, width: 600, height: 60 };
+  }
 
   if (isReview) {
     // "Make.com Review: ..." → "Make.com"; "Notion AI Review" → "Notion AI";
@@ -249,19 +259,20 @@ function buildSchemas(article, opts = {}) {
   if (kind === "howto") {
     const steps = extractHowToSteps(article.content_markdown);
     if (steps.length >= 2) {
-      schemas.push({
+      const howto = {
         "@context": "https://schema.org",
         "@type": "HowTo",
         name: article.title,
         description: article.meta_description || "",
-        image: imageUrl || DEFAULT_IMG,
         step: steps.map((s, i) => ({
           "@type": "HowToStep",
           position: i + 1,
           name: s.name,
           text: s.text,
         })),
-      });
+      };
+      if (imageUrl) howto.image = imageUrl;
+      schemas.push(howto);
     }
   }
 
