@@ -191,7 +191,17 @@ Audience: Small business owners, marketers, creators evaluating AI tools.
 
 CRITICAL: All references must be 2026. Never use 2023, 2024, or 2025 as "current".
 
-Return JSON with: title (50-60 chars, include keyword and "2026"), slug (kebab-case with 2026), meta_description (150-160 chars), primary_keyword, lsi_keywords (array 5-7), target_word_count, sections (array of 6-8 objects each with: heading, level, bullets array 3-5, word_target number ~300), faqs (array of 5 question strings), internal_link_ideas (array).`,
+TITLE ENGINEERING (CRITICAL for CTR):
+- 50-60 chars, include keyword naturally, end with "2026" or "(2026)" or "[2026]"
+- Use ONE high-CTR formula:
+  * Comparison: "X vs Y: Honest Comparison [2026]" or "X vs Y — Which Wins in 2026?"
+  * Review: "X Review: Worth It in 2026? [Tested]" or "X Review — Pros, Cons & Pricing (2026)"
+  * Listicle: "7 Best X for Y in 2026 [Free Options]" or "Top 10 X That Actually Work (2026)"
+  * How-to: "How to X in 2026 [Step-by-Step]"
+- MUST use at least ONE hook: brackets [Free]/[Tested]/[Honest], numbers, power words (Best, Proven, Honest, Worth It), or curiosity (Which Wins?, Worth It?)
+- NEVER flat titles like "Best AI Tools 2026" — use "7 Best AI Tools That Actually Work [2026]"
+
+Return JSON with: title (50-60 chars, high-CTR as above), slug (kebab-case with 2026), meta_description (150-160 chars, benefit + curiosity hook), primary_keyword, lsi_keywords (array 5-7), target_word_count, sections (array of 6-8 objects each with: heading, level, bullets array 3-5, word_target number ~300), faqs (array of 5 question strings), internal_link_ideas (array).`,
       2500,
       true
     );

@@ -17,7 +17,13 @@ Your task: Generate a detailed article outline for the following target keyword.
 **Primary audience:** Small business owners, marketers, and creators evaluating AI tools for their workflow.
 
 **Requirements:**
-1. Title that is click-worthy but NOT clickbait (include the keyword naturally)
+1. Title that DEMANDS clicks (not clickbait, but psychologically compelling):
+   - Use brackets: [Free], [Tested], [Honest], [Updated], [Step-by-Step]
+   - Use power words: Best, Proven, Honest, Ultimate, Worth It, Actually Work
+   - Use numbers when possible: "7 Best", "Top 10", "$0 to Start"
+   - End with year: "2026" or "(2026)" or "[2026]"
+   - Match article type: comparison="X vs Y: Which Wins?", review="X Review: Worth It? [Tested]", listicle="7 Best X [Free Options]"
+   - BAD: "Best AI Writing Tools 2026" / GOOD: "7 Best AI Writing Tools That Actually Work [2026]"
 2. Meta description (150-160 chars) with keyword and a hook
 3. Table of contents with H2s and H3s
 4. Target reading intent: {{intent}} (informational/commercial/transactional)
@@ -187,10 +193,14 @@ Review and finalize the SEO elements for this article:
 **First 200 words:** {{intro}}
 
 **Tasks:**
-1. Verify title is 50-60 chars and contains the primary keyword naturally
+1. Verify title is 50-60 chars, contains keyword naturally, and uses a CTR hook (brackets, numbers, power words, or curiosity gap). If the title is flat/boring, REWRITE it.
 2. Verify meta is 150-160 chars, includes keyword, and has a hook (curiosity, benefit, urgency)
-3. Suggest 3 alternate title variations (for A/B testing in WP if available)
+3. Suggest 3 alternate title variations using DIFFERENT hook patterns:
+   - One with brackets: e.g. "[Free]", "[Tested]", "[Honest Review]"
+   - One with a number: e.g. "7 Best", "Top 5", "#1"
+   - One with curiosity: e.g. "Worth It?", "Which One Wins?", "You Need to Know"
 4. Flag any SEO issue in the intro (keyword stuffing, weak opening, etc.)
+5. If the original title has NO psychological hook (just keyword + year), mark it as "needs_rewrite: true"
 
 **Output:** JSON
 {

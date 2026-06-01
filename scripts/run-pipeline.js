@@ -482,7 +482,24 @@ CRITICAL: All references must be 2026. If the keyword has a year, use 2026. Neve
 CRITICAL: The outline MUST have at least 10 H2 sections. Each section must have word_target >= 250. Total word_targets must sum to 3000+.
 CRITICAL: Include a dedicated "FAQ" section as the last H2 with 6 substantive questions.
 
-Return a JSON object with keys: title (50-60 chars, includes keyword and "2026"), slug (kebab-case with "2026"), meta_description (150-160 chars, mentions 2026), primary_keyword, lsi_keywords (array of 5-7), target_word_count (must be 3000), article_type, sections (array of AT LEAST 10 objects with: heading, level, bullets array of 4-6 items, word_target number >= 250), faqs (array of 6 question strings), internal_link_ideas (array of strings).`,
+TITLE ENGINEERING (this is CRITICAL for CTR — a boring title = zero clicks):
+- 50-60 chars, MUST include primary keyword naturally and end with "2026" or "(2026)"
+- MUST use ONE of these high-CTR formulas (pick the best fit for the article type):
+  * Comparison: "X vs Y: Honest Comparison [2026]" or "X vs Y — Which One Wins in 2026?"
+  * Review: "X Review: Worth It in 2026? [Tested]" or "X Review — Pros, Cons & Pricing (2026)"
+  * Listicle: "7 Best X for Y in 2026 [Free Options]" or "Top 10 X That Actually Work (2026)"
+  * How-to: "How to X in 2026 [Step-by-Step]" or "X Made Easy: Complete Guide (2026)"
+  * Alternative: "5 Best X Alternatives in 2026 [Cheaper]"
+- REQUIRED psychological hooks (use at least ONE):
+  * Brackets: [Free], [Tested], [Honest], [Updated], [Step-by-Step], [With Pricing]
+  * Power words: Best, Proven, Honest, Ultimate, Worth It, Actually Work
+  * Numbers: specific counts (7, 10, 5), pricing ($0, $29/mo)
+  * Curiosity gaps: "Worth It?", "Which One Wins?", "You Need to Know"
+- NEVER write flat titles like "Best AI Tools for Writing 2026" — that is BORING
+- Good: "7 Best AI Writing Tools That Actually Work [2026]"
+- Bad: "Best AI Writing Tools 2026"
+
+Return a JSON object with keys: title (50-60 chars, high-CTR formula as described above), slug (kebab-case with "2026"), meta_description (150-160 chars, mentions 2026, includes a benefit + curiosity hook), primary_keyword, lsi_keywords (array of 5-7), target_word_count (must be 3000), article_type, sections (array of AT LEAST 10 objects with: heading, level, bullets array of 4-6 items, word_target number >= 250), faqs (array of 6 question strings), internal_link_ideas (array of strings).`,
         2500,
         true
       );
@@ -714,10 +731,18 @@ Rules: Start with "## FAQ" heading. Each question as "###" sub-heading. Each ans
       const varRes = await gpt(
         "gpt-4o-mini",
         "You are an SEO headline specialist. Output JSON only.",
-        `Generate 2 alternative SEO title variants for this article.
+        `Generate 2 high-CTR alternative title variants for this article.
 Primary title: "${outline.title}"
 Primary keyword: "${kw.keyword}"
-Rules: slightly different angle or emphasis, same keyword, keep "2026", under 65 chars each.
+Article type: "${kw.article_type}"
+
+Rules for EACH variant:
+- Under 60 chars, include keyword naturally, end with "2026" or "(2026)" or "[2026]"
+- Each variant MUST use a DIFFERENT psychological hook pattern:
+  Variant 1: Use brackets + power word (e.g. "[Tested]", "[Free Options]", "[Honest Review]")
+  Variant 2: Use curiosity/emotion (e.g. "Worth It?", "Which One Wins?", "You Need This")
+- Include at least one: number, bracket, or question mark per variant
+- NEVER be generic/flat like "Best X Tools 2026" — that gets ZERO clicks
 Return JSON: { "variants": ["Title 1", "Title 2"] }`,
         200,
         true
