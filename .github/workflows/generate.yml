@@ -120,15 +120,15 @@ jobs:
         continue-on-error: true
         run: node scripts/categorize-posts.js --limit 15
 
-      # Self-healing schema (add-only): ~65 posts had no JSON-LD because schema was
-      # coupled to image gen. add-only adds fresh schema (breadcrumb + stars) to
-      # those missing it, skipping posts that already have it. Converges in ~3 days.
-      # (The manual "SEO Backfill" workflow with --upgrade refreshes the older 52
-      #  too — this gradual step just guarantees no article stays schema-less.)
-      - name: Backfill missing schema (gradual, add-only)
+      # Self-healing schema (upgrade): cycles 5 articles/run ordered by
+      # schema_updated_at NULLS FIRST, so it sweeps all 117 in ~4 days then keeps
+      # them fresh as lib/schema.js evolves. --upgrade re-injects breadcrumb +
+      # honest stars + dates (fixes the 65 schema-less AND the 52 old-format).
+      # Runs after categorize so breadcrumbs pick up the right category.
+      - name: Refresh schema (gradual, cycles all articles)
         id: post-schema
         continue-on-error: true
-        run: node scripts/add-schema-markup.js --limit 5
+        run: node scripts/add-schema-markup.js --upgrade --limit 5
 
       - name: Auto-refill keyword queue (if < 50 keywords)
         id: post-keywords

@@ -131,8 +131,11 @@ async function wp(method, endpoint, body) {
     console.warn(`⚠️  Could not load categories (breadcrumbs will skip category level): ${e.message.slice(0, 120)}`);
   }
 
+  // Order by schema_updated_at NULLS FIRST so the gradual cron step cycles
+  // through every article (least-recently-stamped first) instead of re-doing
+  // the newest N each run. Stamped after each write/skip below.
   let endpoint =
-    "articles?select=id,title,slug,wp_post_id,article_type,meta_description,featured_image_url,content_markdown,quality_score,word_count&wp_post_id=not.is.null&status=eq.published&order=published_at.desc";
+    "articles?select=id,title,slug,wp_post_id,article_type,meta_description,featured_image_url,content_markdown,quality_score,word_count,schema_updated_at&wp_post_id=not.is.null&status=eq.published&order=schema_updated_at.asc.nullsfirst,published_at.desc";
   if (LIMIT) endpoint += `&limit=${LIMIT}`;
   const articles = await supa("GET", endpoint);
   console.log(`Found ${articles.length} published article(s) with WP posts.\n`);
@@ -154,6 +157,10 @@ async function wp(method, endpoint, body) {
       const already = hasSchema(raw);
 
       if (already && !UPGRADE) {
+        // Stamp so the NULLS-FIRST cycle moves past it next run (no WP write).
+        if (!DRY_RUN) {
+          await supa("PATCH", `articles?id=eq.${a.id}`, { schema_updated_at: new Date().toISOString() }).catch(() => {});
+        }
         skipped++;
         continue;
       }
@@ -176,6 +183,7 @@ async function wp(method, endpoint, body) {
         console.log(`${prefix} [dry] #${a.wp_post_id} ${a.title.slice(0, 45)} → ${types} (cat: ${categorySlug || "none"})`);
       } else {
         await wp("POST", `posts/${a.wp_post_id}`, { content: newContent });
+        await supa("PATCH", `articles?id=eq.${a.id}`, { schema_updated_at: new Date().toISOString() }).catch(() => {});
         console.log(`${prefix} ${already ? "↑" : "+"} #${a.wp_post_id} ${a.title.slice(0, 45)} → ${types}`);
       }
 
