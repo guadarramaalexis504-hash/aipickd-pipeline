@@ -213,7 +213,10 @@ Return JSON: { "title": "...", "meta_description": "...", "title_chars": N, "met
     `\n🔄 AIPickd Title Refresh${DRY_RUN ? " (DRY RUN)" : ""} — limit ${LIMIT}\n`
   );
 
-  // ── 1. Fetch oldest published articles that haven't been refreshed ────────
+  // ── 1. Fetch un-refreshed published articles, highest-opportunity first ───
+  // Order by Search Console impressions desc (NULLs last) so once GSC data
+  // exists we rewrite the titles of the most-seen pages first — the biggest
+  // CTR wins. Falls back to oldest-first when gsc_impressions is null.
   let articles;
   try {
     articles = await supa(
@@ -222,8 +225,8 @@ Return JSON: { "title": "...", "meta_description": "...", "title_chars": N, "met
         "status=eq.published" +
         "&title_refreshed_at=is.null" +
         "&wp_post_id=not.is.null" +
-        "&select=id,title,slug,primary_keyword,article_type,meta_description,wp_post_id,published_at" +
-        "&order=published_at.asc" +
+        "&select=id,title,slug,primary_keyword,article_type,meta_description,wp_post_id,published_at,gsc_impressions" +
+        "&order=gsc_impressions.desc.nullslast,published_at.asc" +
         `&limit=${LIMIT}`
     );
   } catch (err) {

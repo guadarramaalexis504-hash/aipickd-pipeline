@@ -1,0 +1,48 @@
+name: "GSC CTR Report"
+
+# Pulls Search Console data → flags pages with impressions but low CTR (the
+# prioritized "fix titles/meta here" list). No-ops safely until the two Google
+# secrets are set (see docs/GSC-SETUP.md).
+
+on:
+  schedule:
+    - cron: "0 7 * * 1" # Mondays 07:00 UTC
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "Lookback window in days"
+        required: false
+        default: "28"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aipickd-mutations
+  cancel-in-progress: false
+
+jobs:
+  gsc-report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup AIPickd environment
+        uses: ./.github/actions/setup-env
+        with:
+          supabase-url: ${{ secrets.SUPABASE_URL }}
+          supabase-service-role-key: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          discord-webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          discord-webhook-pipeline: ${{ secrets.DISCORD_WEBHOOK_PIPELINE }}
+
+      - name: Run GSC CTR report
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          GOOGLE_SEARCH_CONSOLE_SITE: ${{ secrets.GOOGLE_SEARCH_CONSOLE_SITE }}
+          DAYS: ${{ github.event.inputs.days || '28' }}
+        run: node scripts/gsc-ctr-report.js --days "$DAYS"
