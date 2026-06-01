@@ -1,250 +1,215 @@
 #!/usr/bin/env node
 /**
- * AIPickd — Add Schema.org structured data (JSON-LD) to articles
+ * AIPickd — Add / upgrade Schema.org structured data (JSON-LD) on articles
  *
- * Adds proper Article/Review schema at the end of each post's content.
- * Google uses this to create rich snippets (stars, breadcrumbs, author info)
- * in search results → higher CTR.
+ * Injects the shared lib/schema.js JSON-LD (Article/Review, BreadcrumbList,
+ * ItemList, HowTo with real steps, FAQPage) into each published post so Google
+ * can show rich results (review stars, clean breadcrumb path, dates) → CTR.
  *
- * Idempotent: skips articles that already have <script type="application/ld+json">
+ * Modes:
+ *   (default)   Skip posts that ALREADY contain JSON-LD; only add to those without.
+ *   --upgrade   Strip existing JSON-LD and re-inject fresh schema (use this after
+ *               changing lib/schema.js — e.g. to add breadcrumbs to old posts).
  *
- * Usage: node scripts/add-schema-markup.js
+ * Flags:
+ *   --upgrade        Replace existing schema instead of skipping
+ *   --dry-run        Report what would change; write nothing
+ *   --limit N        Process at most N articles (default: all)
+ *
+ * Breadcrumbs use each post's REAL WordPress category. Ratings on single-product
+ * reviews are derived from quality_score (not hardcoded).
+ *
+ * NOTE: requires working WP auth (Application Password / Basic Auth). Local runs
+ * with the plain admin password return 401 — run this in GitHub Actions, where
+ * the WP_ADMIN_PASSWORD secret authenticates correctly.
+ *
+ * Usage:
+ *   node scripts/add-schema-markup.js --dry-run
+ *   node scripts/add-schema-markup.js --upgrade --limit 10
+ *   node scripts/add-schema-markup.js --upgrade
  */
 
-const fs = require("fs");
-const path = require("path");
+"use strict";
 
-const envPath = path.join(__dirname, "..", ".env");
-const env = {};
-fs.readFileSync(envPath, "utf8").split("\n").forEach((line) => {
-  const m = line.match(/^([A-Z_]+)="?([^"\n]*)"?$/);
-  if (m) env[m[1]] = m[2];
-});
+const { loadEnv } = require("./lib/env");
+const { fetchWithRetry } = require("./lib/http");
+const {
+  buildSchemas,
+  renderSchemaBlock,
+  stripSchemaBlocks,
+  hasSchema,
+} = require("./lib/schema");
 
-const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, WP_USERNAME, WP_ADMIN_PASSWORD } = env;
-const auth = Buffer.from(`${WP_USERNAME}:${WP_ADMIN_PASSWORD}`).toString("base64");
+let notify = { notifyPipeline: async () => {}, notifyAlert: async () => {} };
+try {
+  notify = require("./notify");
+} catch (_) {
+  /* notify is optional */
+}
+
+const env = loadEnv();
+
+// ── CLI ───────────────────────────────────────────────────────────
+const argv = process.argv.slice(2);
+const UPGRADE = argv.includes("--upgrade");
+const DRY_RUN = argv.includes("--dry-run");
+const limitIdx = argv.indexOf("--limit");
+const LIMIT = limitIdx >= 0 ? Math.max(1, parseInt(argv[limitIdx + 1], 10) || 0) : 0;
+
+// ── Constants ─────────────────────────────────────────────────────
+const WP_HOST = "https://aipickd.com";
+const UA =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+  "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+const REQUEST_DELAY_MS = 1200; // Hostinger-friendly
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const auth = Buffer.from(`${env.WP_USERNAME}:${env.WP_ADMIN_PASSWORD}`).toString("base64");
+
+function validateEnv() {
+  const missing = ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "WP_USERNAME", "WP_ADMIN_PASSWORD"].filter(
+    (k) => !env[k]
+  );
+  if (missing.length) {
+    console.error(`Missing env var(s): ${missing.join(", ")}`);
+    process.exit(2);
+  }
+}
 
 async function supa(method, endpoint, body) {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/${endpoint}`, {
-    method,
-    headers: {
-      apikey: SUPABASE_SERVICE_ROLE_KEY,
-      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-      "Content-Type": "application/json",
-      Prefer: "return=representation",
+  const res = await fetchWithRetry(
+    `${env.SUPABASE_URL}/rest/v1/${endpoint}`,
+    {
+      method,
+      headers: {
+        apikey: env.SUPABASE_SERVICE_ROLE_KEY,
+        Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+        "Content-Type": "application/json",
+        Prefer: "return=representation",
+      },
+      body: body ? JSON.stringify(body) : undefined,
     },
-    body: body ? JSON.stringify(body) : undefined,
-  });
+    { timeout: 30000, retries: 3 }
+  );
   const text = await res.text();
-  if (!res.ok) throw new Error(`Supa: ${res.status} ${text.slice(0, 200)}`);
+  if (!res.ok) throw new Error(`Supa ${method} ${endpoint}: ${res.status} ${text.slice(0, 200)}`);
   return text ? JSON.parse(text) : null;
 }
 
 async function wp(method, endpoint, body) {
-  const res = await fetch(`https://aipickd.com/wp-json/wp/v2/${endpoint}`, {
-    method,
-    headers: { Authorization: `Basic ${auth}`, "Content-Type": "application/json" },
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  const res = await fetchWithRetry(
+    `${WP_HOST}/wp-json/wp/v2/${endpoint}`,
+    {
+      method,
+      headers: {
+        Authorization: `Basic ${auth}`,
+        "Content-Type": "application/json",
+        "User-Agent": UA,
+        Accept: "application/json",
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    },
+    { timeout: 60000, retries: 3 }
+  );
   const text = await res.text();
-  if (!res.ok) throw new Error(`WP: ${res.status} ${text.slice(0, 200)}`);
+  if (!res.ok) throw new Error(`WP ${method} ${endpoint}: ${res.status} ${text.slice(0, 200)}`);
   return text ? JSON.parse(text) : null;
 }
 
-// Extract Q&A pairs from a "## FAQ" section in markdown (mirrors run-pipeline.js)
-function extractFAQs(md) {
-  if (!md) return [];
-  const faqMatch = md.match(/^##\s+(?:FAQ|Frequently Asked Questions|Common Questions|FAQs).*$/im);
-  if (!faqMatch) return [];
-  const start = md.indexOf(faqMatch[0]) + faqMatch[0].length;
-  const rest = md.slice(start);
-  const endMatch = rest.match(/^##\s+/m);
-  const faqBlock = endMatch ? rest.slice(0, rest.indexOf(endMatch[0])) : rest;
-
-  const qas = [];
-  const headingPattern = /^###\s+(.+?)\n([\s\S]*?)(?=^###\s+|$)/gm;
-  let m;
-  while ((m = headingPattern.exec(faqBlock)) !== null) {
-    const q = m[1].trim().replace(/^\*\*|\*\*$/g, "").replace(/^Q:\s*/i, "");
-    const a = m[2].trim().replace(/^\*\*A:\*\*\s*/i, "").replace(/^A:\s*/i, "");
-    if (q && a && q.length < 200 && a.length > 20) {
-      qas.push({ q, a: a.slice(0, 600) });
-    }
-  }
-  return qas.slice(0, 8);
-}
-
-function buildSchema(article, wpPost) {
-  const url = wpPost.link;
-  const datePublished = wpPost.date || new Date().toISOString();
-  const dateModified = wpPost.modified || datePublished;
-  const imageUrl = article.featured_image_url || "https://aipickd.com/wp-content/uploads/aipickd-og.png";
-
-  // Article type drives which extra schemas we emit alongside Article/Review.
-  // Each Google rich-result family is gated on specific required fields, so
-  // emitting a second @type alongside the base lets Google pick the best
-  // result format per article without us guessing.
-  const articleType = (article.article_type || "article").toLowerCase();
-  const isReview     = ["review", "comparison"].includes(articleType);
-  const isListicle   = ["listicle", "list", "top", "best"].includes(articleType) || /^(?:best|top \d+|top-\d+)/i.test(article.title || "");
-  const isHowTo      = articleType === "how-to" || /^how to\b/i.test(article.title || "");
-
-  // ── Base Article/Review (always present) ────────────────────────────
-  const base = {
-    "@context": "https://schema.org",
-    "@type": isReview ? "Review" : "Article",
-    "headline": article.title,
-    "description": article.meta_description || "",
-    "image": {
-      "@type": "ImageObject",
-      "url": imageUrl,
-      "width": 1792,
-      "height": 1024
-    },
-    "datePublished": datePublished,
-    "dateModified": dateModified,
-    "mainEntityOfPage": { "@type": "WebPage", "@id": url },
-    "author": {
-      "@type": "Organization",
-      "name": "AIPickd Editorial",
-      "url": "https://aipickd.com/about-aipickd"
-    },
-    "publisher": {
-      "@type": "Organization",
-      "name": "AIPickd",
-      "url": "https://aipickd.com",
-      "logo": {
-        "@type": "ImageObject",
-        "url": "https://aipickd.com/wp-content/uploads/aipickd-logo.png",
-        "width": 300,
-        "height": 60
-      }
-    }
-  };
-
-  if (isReview) {
-    const reviewedName = (article.title || "").split(/\s+(?:vs|:|Review|review)\s+/i)[0].trim();
-    base.itemReviewed = {
-      "@type": "SoftwareApplication",
-      "name": reviewedName,
-      "applicationCategory": "BusinessApplication"
-    };
-    base.reviewRating = {
-      "@type": "Rating",
-      "ratingValue": "4.3",
-      "bestRating": "5",
-      "worstRating": "1"
-    };
-  }
-
-  // We can return a single schema object, or an array of multiple
-  // schemas. WP renders each block independently — Google picks whichever
-  // matches the page best (rich snippet, FAQ, list, HowTo).
-  const schemas = [base];
-
-  // ── ItemList for listicles ───────────────────────────────────────────
-  // Listicles ("Top 10 X for Y 2026") become eligible for the Carousel
-  // rich result if we declare an ItemList. We don't know each tool's
-  // canonical URL without parsing the content, so we emit a count-only
-  // skeleton — still passes validation and Google fills the rest from
-  // the article body.
-  if (isListicle) {
-    schemas.push({
-      "@context": "https://schema.org",
-      "@type": "ItemList",
-      "name": article.title,
-      "itemListOrder": "https://schema.org/ItemListOrderDescending",
-      "url": url
-    });
-  }
-
-  // ── HowTo for how-to articles ────────────────────────────────────────
-  // Google requires `step` array with at least 2 items for rich result.
-  // We can't reliably extract steps from arbitrary markdown post-hoc, so
-  // we leave the steps array empty here — the article body usually has
-  // h3 step headings that future PRs can parse and inject. Emitting
-  // HowTo with a placeholder is better than no HowTo at all because the
-  // page becomes eligible once steps are added downstream.
-  if (isHowTo) {
-    schemas.push({
-      "@context": "https://schema.org",
-      "@type": "HowTo",
-      "name": article.title,
-      "description": article.meta_description || "",
-      "image": imageUrl,
-      "totalTime": "PT15M", // generic 15-min estimate; can refine later
-      "step": [] // TODO: future PR — extract h3 step headings from body
-    });
-  }
-
-  // ── FAQPage for articles with FAQ sections ──────────────────────────
-  // Google shows FAQ rich results (expandable Q&A) when ≥3 valid pairs
-  // are declared. We parse these from the markdown FAQ section.
-  const faqs = extractFAQs(article.content_markdown);
-  if (faqs.length >= 3) {
-    schemas.push({
-      "@context": "https://schema.org",
-      "@type": "FAQPage",
-      "mainEntity": faqs.map((f) => ({
-        "@type": "Question",
-        "name": f.q,
-        "acceptedAnswer": { "@type": "Answer", "text": f.a },
-      })),
-    });
-  }
-
-  // Single-schema response when no extras — keeps existing consumers
-  // (the script's JSON.stringify+inject) backward compatible.
-  return schemas.length === 1 ? schemas[0] : schemas;
-}
-
 (async () => {
-  console.log("== add-schema-markup ==\n");
-
-  const articles = await supa(
-    "GET",
-    "articles?select=id,title,slug,wp_post_id,article_type,meta_description,featured_image_url,content_markdown&wp_post_id=not.is.null"
+  validateEnv();
+  console.log(
+    `\n== add-schema-markup ${UPGRADE ? "(UPGRADE)" : "(add-only)"}${DRY_RUN ? " [DRY RUN]" : ""} ==\n`
   );
 
-  console.log(`Found ${articles.length} articles with WP posts.\n`);
+  // Map WP category id → slug for breadcrumbs
+  let catIdToSlug = {};
+  try {
+    const cats = await wp("GET", "categories?per_page=50&_fields=id,slug");
+    for (const c of cats || []) catIdToSlug[c.id] = c.slug;
+    console.log(`Loaded ${Object.keys(catIdToSlug).length} WP categories.\n`);
+  } catch (e) {
+    console.warn(`⚠️  Could not load categories (breadcrumbs will skip category level): ${e.message.slice(0, 120)}`);
+  }
 
-  let done = 0;
-  let skipped = 0;
-  let failed = 0;
+  let endpoint =
+    "articles?select=id,title,slug,wp_post_id,article_type,meta_description,featured_image_url,content_markdown,quality_score,word_count&wp_post_id=not.is.null&status=eq.published&order=published_at.desc";
+  if (LIMIT) endpoint += `&limit=${LIMIT}`;
+  const articles = await supa("GET", endpoint);
+  console.log(`Found ${articles.length} published article(s) with WP posts.\n`);
+
+  let added = 0,
+    upgraded = 0,
+    skipped = 0,
+    failed = 0;
+  const samples = [];
 
   for (const [i, a] of articles.entries()) {
     const prefix = `  [${i + 1}/${articles.length}]`;
     try {
-      // Fetch current WP post
-      const wpPost = await wp("GET", `posts/${a.wp_post_id}?context=edit&_fields=id,link,date,modified,content`);
+      const wpPost = await wp(
+        "GET",
+        `posts/${a.wp_post_id}?context=edit&_fields=id,link,date,modified,content,categories`
+      );
+      const raw = wpPost.content?.raw || "";
+      const already = hasSchema(raw);
 
-      // Check if schema already exists
-      if (wpPost.content?.raw?.includes("application/ld+json")) {
+      if (already && !UPGRADE) {
         skipped++;
         continue;
       }
 
-      // Build JSON-LD block(s). buildSchema may return a single object
-      // (legacy) or an array when the article qualifies for extra schemas
-      // (HowTo, ItemList). Each schema gets its own <script> tag so the
-      // search engines can detect them independently.
-      const schemaOut = buildSchema(a, wpPost);
-      const schemas = Array.isArray(schemaOut) ? schemaOut : [schemaOut];
-      const schemaBlock = schemas
-        .map((s) => `<!-- wp:html -->\n<script type="application/ld+json">\n${JSON.stringify(s, null, 2)}\n</script>\n<!-- /wp:html -->`)
-        .join("\n\n");
-      const finalSchemaBlock = "\n\n" + schemaBlock;
+      const categorySlug = (wpPost.categories || []).map((id) => catIdToSlug[id]).find(Boolean) || null;
+      const schemas = buildSchemas(a, {
+        url: wpPost.link,
+        imageUrl: a.featured_image_url || undefined,
+        datePublished: wpPost.date || new Date().toISOString(),
+        dateModified: wpPost.modified || wpPost.date || new Date().toISOString(),
+        wordCount: a.word_count || 0,
+        categorySlug,
+      });
 
-      const newContent = (wpPost.content?.raw || "") + finalSchemaBlock;
-      await wp("POST", `posts/${a.wp_post_id}`, { content: newContent });
+      const cleanBody = already ? stripSchemaBlocks(raw) : raw.trimEnd();
+      const newContent = cleanBody + renderSchemaBlock(schemas);
+      const types = schemas.map((s) => s["@type"]).join(", ");
 
-      done++;
-      console.log(`${prefix} ✓ #${a.wp_post_id} ${a.title.slice(0, 55)}`);
+      if (DRY_RUN) {
+        console.log(`${prefix} [dry] #${a.wp_post_id} ${a.title.slice(0, 45)} → ${types} (cat: ${categorySlug || "none"})`);
+      } else {
+        await wp("POST", `posts/${a.wp_post_id}`, { content: newContent });
+        console.log(`${prefix} ${already ? "↑" : "+"} #${a.wp_post_id} ${a.title.slice(0, 45)} → ${types}`);
+      }
+
+      if (already) upgraded++;
+      else added++;
+      if (samples.length < 3) samples.push(`${a.title.slice(0, 40)} → ${types}`);
+
+      await sleep(REQUEST_DELAY_MS);
     } catch (e) {
       failed++;
-      console.log(`${prefix} ✗ #${a.wp_post_id} ${e.message.slice(0, 100)}`);
+      console.log(`${prefix} ✗ #${a.wp_post_id} ${e.message.slice(0, 120)}`);
     }
   }
 
-  console.log(`\n✅ Done: ${done} updated, ${skipped} skipped (already had schema), ${failed} failed.`);
-})().catch((e) => { console.error("❌", e.message); process.exit(1); });
+  console.log(
+    `\n✅ Done: ${added} added, ${upgraded} upgraded, ${skipped} skipped, ${failed} failed${DRY_RUN ? " (dry run — nothing written)" : ""}.`
+  );
+
+  // Discord summary (only on real runs that changed something)
+  if (!DRY_RUN && (added + upgraded) > 0) {
+    const sampleText = samples.map((s) => `• ${s}`).join("\n");
+    await notify
+      .notifyPipeline(
+        `**Schema markup:** ${added} added, ${upgraded} upgraded${failed ? `, ${failed} failed` : ""}.\n${sampleText}`,
+        {}
+      )
+      .catch(() => {});
+  }
+  if (!DRY_RUN && failed > 0 && added + upgraded === 0) {
+    await notify.notifyAlert(`Schema markup: all ${failed} updates failed. Check WP auth.`, "warning").catch(() => {});
+  }
+
+  if (failed > 0) process.exitCode = 1;
+})().catch((e) => {
+  console.error("❌", e.message);
+  process.exit(1);
+});

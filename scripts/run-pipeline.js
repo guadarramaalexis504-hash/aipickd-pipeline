@@ -27,6 +27,7 @@ const { fetchWithRetry } = require("./lib/http");
 const { publishKey: idempotencyPublishKey } = require("./lib/idempotency");
 const { validateRenderedHtml } = require("./lib/html-validator");
 const { ping: hcPing } = require("./lib/heartbeat");
+const { buildSchemas, renderSchemaBlock, NICHE_TO_CATEGORY_SLUG } = require("./lib/schema");
 
 /**
  * Granular healthcheck — pings a per-step HEALTHCHECK_URL_<STEP> if
@@ -1026,101 +1027,21 @@ async function generateFeaturedImage(title, slug, postId, articleType = "article
 }
 
 // --- Schema.org JSON-LD injection ---
-// Extract Q&A pairs from a "## FAQ" / "## Frequently Asked Questions" section in markdown
-function extractFAQs(md) {
-  if (!md) return [];
-  // Find FAQ section
-  const faqMatch = md.match(/^##\s+(?:FAQ|Frequently Asked Questions|Common Questions|FAQs).*$/im);
-  if (!faqMatch) return [];
-  const start = md.indexOf(faqMatch[0]) + faqMatch[0].length;
-  // FAQ section ends at next ## (or end of doc)
-  const rest = md.slice(start);
-  const endMatch = rest.match(/^##\s+/m);
-  const faqBlock = endMatch ? rest.slice(0, rest.indexOf(endMatch[0])) : rest;
-
-  // Each Q is "### Question" or "**Q:** Question?" — try heading variant first
-  const qas = [];
-  const headingPattern = /^###\s+(.+?)\n([\s\S]*?)(?=^###\s+|$)/gm;
-  let m;
-  while ((m = headingPattern.exec(faqBlock)) !== null) {
-    const q = m[1].trim().replace(/^\*\*|\*\*$/g, "").replace(/^Q:\s*/i, "");
-    const a = m[2].trim().replace(/^\*\*A:\*\*\s*/i, "").replace(/^A:\s*/i, "");
-    if (q && a && q.length < 200 && a.length > 20) {
-      qas.push({ q, a: a.slice(0, 600) });
-    }
-  }
-  return qas.slice(0, 8); // Cap at 8 FAQs
-}
-
-function buildSchemaBlock(article, wpLink, imageUrl) {
-  const isReview = ["review", "comparison"].includes(article.article_type);
-  const articleSchema = {
-    "@context": "https://schema.org",
-    "@type": isReview ? "Review" : "Article",
-    "headline": article.title,
-    "description": article.meta_description || "",
-    "image": {
-      "@type": "ImageObject",
-      "url": imageUrl || "https://aipickd.com/wp-content/uploads/aipickd-og.png",
-      "width": 1200,
-      "height": 630,
-    },
-    "datePublished": new Date().toISOString(),
-    "dateModified": new Date().toISOString(),
-    "mainEntityOfPage": { "@type": "WebPage", "@id": wpLink },
-    "isAccessibleForFree": true,
-    "inLanguage": "en-US",
-    "wordCount": article.word_count || 0,
-    "author": {
-      "@type": "Organization",
-      "name": "AIPickd",
-      "url": "https://aipickd.com",
-      "logo": {
-        "@type": "ImageObject",
-        "url": "https://aipickd.com/wp-content/uploads/aipickd-logo.png",
-        "width": 600,
-        "height": 60,
-      },
-    },
-    "publisher": {
-      "@type": "Organization", "name": "AIPickd", "url": "https://aipickd.com",
-      "logo": {
-        "@type": "ImageObject",
-        "url": "https://aipickd.com/wp-content/uploads/aipickd-logo.png",
-        "width": 600,
-        "height": 60,
-      },
-    },
-  };
-  if (isReview) {
-    articleSchema.itemReviewed = {
-      "@type": "SoftwareApplication",
-      "name": article.title.split(/vs|:|Review/i)[0].trim(),
-      "applicationCategory": "BusinessApplication",
-    };
-    articleSchema.reviewRating = { "@type": "Rating", "ratingValue": "4.3", "bestRating": "5", "worstRating": "1" };
-  }
-
-  // Build optional FAQPage schema
-  const faqs = extractFAQs(article.content_markdown);
-  const blocks = [articleSchema];
-  if (faqs.length >= 3) {
-    blocks.push({
-      "@context": "https://schema.org",
-      "@type": "FAQPage",
-      "mainEntity": faqs.map((f) => ({
-        "@type": "Question",
-        "name": f.q,
-        "acceptedAnswer": { "@type": "Answer", "text": f.a },
-      })),
-    });
-  }
-
-  // Each schema gets its own <script> tag so Google's rich-results parser
-  // detects them independently (more reliable than a single JSON array).
-  return "\n\n" + blocks
-    .map((s) => `<!-- wp:html -->\n<script type="application/ld+json">\n${JSON.stringify(s, null, 2)}\n</script>\n<!-- /wp:html -->`)
-    .join("\n\n");
+// Delegates to the shared lib/schema.js module so new articles and the
+// add-schema-markup.js backfill emit IDENTICAL structured data (Article/Review,
+// BreadcrumbList, ItemList, HowTo with real steps, FAQPage). `categorySlug`
+// drives the breadcrumb trail (Home > Category > Title).
+function buildSchemaBlock(article, wpLink, imageUrl, categorySlug) {
+  const now = new Date().toISOString();
+  const schemas = buildSchemas(article, {
+    url: wpLink,
+    imageUrl,
+    datePublished: now,
+    dateModified: now,
+    wordCount: article.word_count || 0,
+    categorySlug: categorySlug || null,
+  });
+  return renderSchemaBlock(schemas);
 }
 
 // --- Enhanced comparison table HTML (richer styles for comparison articles) ---
@@ -1596,15 +1517,23 @@ async function publishAllDrafts(maxCount = 10) {
       if (tagIds.length > 0) console.log(`   🏷️  Tags: ${tagSlugs.slice(0, 5).join(", ")}...`);
       const finalStatus = WP_STATUS === "publish" ? "published" : "pending_review";
 
-      // Post-publish: add image + schema + ping (parallel)
+      // Post-publish: add image + schema + ping
       if (WP_STATUS === "publish") {
         const imgUrl = await generateFeaturedImage(
           article.title, article.slug, wpPost.id,
           article.article_type, article.primary_keyword
         );
+        // ALWAYS inject schema — decoupled from image success. Schema is a
+        // top CTR lever (breadcrumbs, review stars, dates) and must NOT depend
+        // on whether DALL-E/Unsplash produced an image this run. Historically
+        // ~56% of articles had no schema because image gen failed and skipped
+        // this whole block. The schema builder falls back to the default OG
+        // image when imgUrl is null.
+        const schemaBlock = buildSchemaBlock(
+          article, wpPost.link, imgUrl || null, NICHE_TO_CATEGORY_SLUG[article.niche?.slug]
+        );
+        await wp("POST", `posts/${wpPost.id}`, { content: html + schemaBlock });
         if (imgUrl) {
-          const schemaBlock = buildSchemaBlock(article, wpPost.link, imgUrl);
-          await wp("POST", `posts/${wpPost.id}`, { content: html + schemaBlock });
           await supa("PATCH", `articles?id=eq.${article.id}`, {
             featured_image_url: imgUrl,
           });
