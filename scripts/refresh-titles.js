@@ -214,16 +214,30 @@ Return JSON: { "title": "...", "meta_description": "...", "title_chars": N, "met
   );
 
   // ── 1. Fetch oldest published articles that haven't been refreshed ────────
-  const articles = await supa(
-    "GET",
-    "articles?" +
-      "status=eq.published" +
-      "&title_refreshed_at=is.null" +
-      "&wp_post_id=not.is.null" +
-      "&select=id,title,slug,primary_keyword,article_type,meta_description,wp_post_id,published_at" +
-      "&order=published_at.asc" +
-      `&limit=${LIMIT}`
-  );
+  let articles;
+  try {
+    articles = await supa(
+      "GET",
+      "articles?" +
+        "status=eq.published" +
+        "&title_refreshed_at=is.null" +
+        "&wp_post_id=not.is.null" +
+        "&select=id,title,slug,primary_keyword,article_type,meta_description,wp_post_id,published_at" +
+        "&order=published_at.asc" +
+        `&limit=${LIMIT}`
+    );
+  } catch (err) {
+    if (err.message.includes("42703") || err.message.includes("does not exist")) {
+      console.error(
+        "\n❌ Column 'title_refreshed_at' does not exist in articles table.\n" +
+        "   Run this migration in Supabase SQL Editor:\n\n" +
+        "   ALTER TABLE public.articles ADD COLUMN IF NOT EXISTS title_refreshed_at TIMESTAMPTZ DEFAULT NULL;\n\n" +
+        "   (Full migration file: supabase/migrations/20260531000000_title_refreshed_at.sql)\n"
+      );
+      process.exit(2);
+    }
+    throw err;
+  }
 
   if (!Array.isArray(articles) || articles.length === 0) {
     console.log("   All articles already refreshed. Nothing to do.");
