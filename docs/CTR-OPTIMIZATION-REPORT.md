@@ -6,6 +6,23 @@ implementé, lo que falta hacer manual, y más ideas pa' seguir.
 
 ---
 
+## 🔄 UPDATE (sesión 2, mismo día)
+
+- ✅ **Plugin meta/OG INSTALADO Y ACTIVO en vivo** (ya no es pendiente). Subido como
+  `aipickd-seo-tags` vía la sesión WP del usuario. Verificado: meta description +
+  og:image + twitter card renderizan en vivo. LiteSpeed cache purgado.
+  - ⚠️ Quedó un duplicado INACTIVO `aipickd-seo-meta` (mi primer zip salió mal por
+    el bug de backslashes de Compress-Archive PS5.1) — borrable con 1 clic, inofensivo.
+- ✅ **Imágenes ya generándose** (gpt-image-1): el cron corrió, 52→56 con imagen y subiendo (~3-4 días pa' los 62 restantes).
+- ✅ **NUEVO: reporte GSC** (`gsc-ctr-report.js` + workflow semanal + `docs/GSC-SETUP.md`):
+  cuando conectes Search Console (~10 min), saca las páginas con muchas impresiones
+  y poco CTR → lista priorizada de qué títulos/metas arreglar primero. `refresh-titles.js`
+  ya ordena por impresiones desc cuando hay datos GSC.
+- **Único manual pendiente de alto valor**: configurar GSC (ver `docs/GSC-SETUP.md`).
+  Todo lo demás se auto-repara vía cron.
+
+---
+
 ## 🔴 Lo que estaba ROTO (hallazgos)
 
 Tres bugs silenciosos estaban matando el CTR sin que nadie supiera:
