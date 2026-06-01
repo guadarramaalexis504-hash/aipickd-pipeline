@@ -104,6 +104,14 @@ jobs:
         continue-on-error: true
         run: node scripts/publish-pending-drafts.js --limit 5
 
+      # Self-healing image backfill: ~65 old articles have no featured image
+      # (the pipeline used the now-removed dall-e-3 model). 3 per run × 6 runs/day
+      # gradually covers the backlog in a few days, then no-ops. ~$0.02/image.
+      - name: Backfill missing featured images (gradual)
+        id: post-backfill-images
+        continue-on-error: true
+        run: node scripts/backfill-images.js --limit 3
+
       - name: Auto-refill keyword queue (if < 50 keywords)
         id: post-keywords
         continue-on-error: true

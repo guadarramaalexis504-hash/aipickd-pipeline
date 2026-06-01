@@ -973,7 +973,12 @@ async function generateFeaturedImage(title, slug, postId, articleType = "article
     return uploadData.source_url;
   }
 
-  // Strategy 1: DALL-E 3 with type-specific prompt
+  // Strategy 1: gpt-image-1 with type-specific prompt.
+  // NOTE: OpenAI removed dall-e-3 from this account (only gpt-image-1 remains).
+  // gpt-image-1 differs from dall-e-3: it returns base64 (b64_json), NOT a URL,
+  // has no 1792x1024 size (use 1536x1024 landscape), and quality is low/medium/
+  // high (not "standard"). This was the silent cause of ~56% of articles having
+  // no featured image (and, before schema was decoupled, no schema either).
   try {
     const typeStyles = {
       comparison: "split-panel composition showing two contrasting tech concepts side by side",
@@ -984,23 +989,30 @@ async function generateFeaturedImage(title, slug, postId, articleType = "article
     };
     const styleHint = typeStyles[articleType] || "editorial tech illustration";
     const kwHint = primaryKeyword ? ` (topic: ${primaryKeyword})` : "";
-    const dallePrompt = `${styleHint}${kwHint}. Modern tech editorial style, abstract geometric shapes, deep navy and electric blue palette with emerald green accents, 16:9 landscape. Clean flat design, high contrast. Absolutely NO text, NO logos, NO UI elements, NO faces, NO brand names.`;
+    const imgPrompt = `${styleHint}${kwHint}. Modern tech editorial style, abstract geometric shapes, deep navy and electric blue palette with emerald green accents, 16:9 landscape. Clean flat design, high contrast. Absolutely NO text, NO logos, NO UI elements, NO faces, NO brand names.`;
 
-    // 60s cap on the DALL-E generation request (the image API is slower than chat).
+    // 90s cap — gpt-image-1 is slower than the old DALL-E endpoint.
     const res = await fetch("https://api.openai.com/v1/images/generations", {
       method: "POST",
       headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "content-type": "application/json" },
-      body: JSON.stringify({ model: "dall-e-3", prompt: dallePrompt, n: 1, size: "1792x1024", quality: "standard" }),
-      signal: AbortSignal.timeout(60_000),
+      body: JSON.stringify({
+        model: "gpt-image-1",
+        prompt: imgPrompt,
+        n: 1,
+        size: "1536x1024", // landscape; gpt-image-1 has no 1792x1024
+        quality: "low",     // abstract art → "low" looks fine and keeps cost ~$0.02/img
+      }),
+      signal: AbortSignal.timeout(90_000),
     });
     const data = await res.json();
-    if (!res.ok) throw new Error(`DALL-E: ${JSON.stringify(data).slice(0, 200)}`);
-    // 30s cap on the image download — DALL-E CDN URLs occasionally hang.
-    const imgRes = await fetch(data.data[0].url, { signal: AbortSignal.timeout(30_000) });
-    const buffer = Buffer.from(await imgRes.arrayBuffer());
+    if (!res.ok) throw new Error(`gpt-image-1: ${JSON.stringify(data).slice(0, 200)}`);
+    // gpt-image-1 returns base64 directly — no separate CDN download needed.
+    const b64 = data.data?.[0]?.b64_json;
+    if (!b64) throw new Error("gpt-image-1: no b64_json in response");
+    const buffer = Buffer.from(b64, "base64");
     return await uploadBufferToWP(buffer, "image/png");
   } catch (e) {
-    console.log(`   ⚠️ DALL-E failed (${e.message.slice(0, 60)}), trying Unsplash...`);
+    console.log(`   ⚠️ gpt-image-1 failed (${e.message.slice(0, 80)}), trying Unsplash...`);
   }
 
   // Strategy 2: Unsplash fallback
