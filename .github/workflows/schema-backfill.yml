@@ -59,7 +59,10 @@ jobs:
           discord-webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
           discord-webhook-pipeline: ${{ secrets.DISCORD_WEBHOOK_PIPELINE }}
 
+      # continue-on-error: a transient network blip to Hostinger on the first
+      # WP call shouldn't abort the whole backfill — let schema still run.
       - name: Categorize uncategorized posts
+        continue-on-error: true
         env:
           LIMIT: ${{ github.event.inputs.limit }}
           DRY_RUN: ${{ github.event.inputs.dry_run || 'true' }}
@@ -71,6 +74,7 @@ jobs:
           node scripts/categorize-posts.js $ARGS
 
       - name: Run schema backfill
+        continue-on-error: true
         env:
           MODE: ${{ github.event.inputs.mode || 'upgrade' }}
           LIMIT: ${{ github.event.inputs.limit }}
