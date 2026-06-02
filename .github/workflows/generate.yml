@@ -120,15 +120,16 @@ jobs:
         continue-on-error: true
         run: node scripts/categorize-posts.js --limit 15
 
-      # Self-healing schema (upgrade): cycles 5 articles/run ordered by
-      # schema_updated_at NULLS FIRST, so it sweeps all 117 in ~4 days then keeps
-      # them fresh as lib/schema.js evolves. --upgrade re-injects breadcrumb +
-      # honest stars + dates (fixes the 65 schema-less AND the 52 old-format).
+      # Self-healing schema (upgrade): cycles 15 articles/run ordered by
+      # schema_updated_at NULLS FIRST, sweeping all 118 in ~1.3 days then keeping
+      # them fresh. --upgrade re-injects breadcrumb + honest stars + dates.
+      # Batch of 15 is gentle (~1 req/s) — confirmed safe; the bulk 118-at-once
+      # manual run tripped Hostinger's rate-limiter (TypeError), small batches don't.
       # Runs after categorize so breadcrumbs pick up the right category.
       - name: Refresh schema (gradual, cycles all articles)
         id: post-schema
         continue-on-error: true
-        run: node scripts/add-schema-markup.js --upgrade --limit 5
+        run: node scripts/add-schema-markup.js --upgrade --limit 15
 
       - name: Auto-refill keyword queue (if < 50 keywords)
         id: post-keywords
