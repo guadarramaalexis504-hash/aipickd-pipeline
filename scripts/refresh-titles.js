@@ -118,6 +118,33 @@ async function wpUpdate(postId, body) {
   return text ? JSON.parse(text) : null;
 }
 
+// ── WP auth preflight ─────────────────────────────────────────────────────────
+// Confirms the WP Basic-auth credentials actually work BEFORE we burn GPT calls
+// on N articles. If the admin password was rotated without updating the
+// GitHub Secret (a real failure mode — see wp-password-rotation-reminder.yml),
+// every per-article write 401s and the run dies with N opaque errors. This
+// turns that into ONE clear, actionable message.
+async function wpAuthCheck() {
+  const auth = Buffer.from(
+    `${env.WP_USERNAME}:${env.WP_ADMIN_PASSWORD}`
+  ).toString("base64");
+  const res = await fetchWithRetry(
+    `${WP_HOST}/wp-json/wp/v2/users/me?context=edit`,
+    {
+      headers: {
+        Authorization: `Basic ${auth}`,
+        "User-Agent": WP_USER_AGENT,
+        Accept: "application/json",
+      },
+    },
+    { timeout: 30_000, retries: 2 }
+  );
+  if (!res.ok) {
+    const body = (await res.text()).slice(0, 200);
+    throw new Error(`WP auth preflight ${res.status}: ${body}`);
+  }
+}
+
 // ── GPT-4o-mini title rewriter ──────────────────────────────────────────────
 async function rewriteTitle(article) {
   const systemPrompt = `You are an SEO headline specialist optimizing for Google SERP click-through rate.
@@ -147,6 +174,10 @@ META DESCRIPTION RULES (150-160 chars):
 - Include the primary keyword in first 80 chars
 - End with a CTA or curiosity hook
 - Use numbers/specifics when possible
+
+BANNED phrases (in BOTH title and meta) — these are AI-tells that read as spam and hurt CTR. NEVER use them:
+"elevate your", "unlock (your|the) potential", "supercharge", "take it to the next level", "in today's (fast-paced )?world", "game-changer", "game changer", "seamless(ly)?", "revolutionize", "dive into", "harness the power", "look no further", "in the realm of", "when it comes to".
+Write like a sharp, specific human reviewer — concrete nouns and numbers, not hype.
 
 Return JSON: { "title": "...", "meta_description": "...", "title_chars": N, "meta_chars": N }`;
 
@@ -251,6 +282,22 @@ Return JSON: { "title": "...", "meta_description": "...", "title_chars": N, "met
     `   Found ${articles.length} article(s) to refresh.\n`
   );
 
+  // ── 1b. WP auth preflight (skip in dry-run — no writes happen there) ──────
+  if (!DRY_RUN) {
+    try {
+      await wpAuthCheck();
+      console.log("   WP auth preflight: OK\n");
+    } catch (e) {
+      console.error(`   ❌ ${e.message}`);
+      await notifyAlert(
+        `Title Refresh aborted — WordPress auth failed.\n${e.message.slice(0, 220)}\n` +
+          `If the WP password was rotated, update the WP_ADMIN_PASSWORD GitHub Secret.`,
+        "critical"
+      ).catch(() => {});
+      process.exit(1);
+    }
+  }
+
   // ── 2. Process each article ───────────────────────────────────────────────
   const results = { refreshed: [], failed: [], skipped: [] };
   const beforeAfter = []; // for Discord summary
@@ -297,14 +344,16 @@ Return JSON: { "title": "...", "meta_description": "...", "title_chars": N, "met
       }
 
       // ── 2b. Update WordPress ────────────────────────────────────────────
+      // Write ONLY real WP fields. This site has no Yoast/Rank Math (confirmed
+      // via REST namespaces — the only registered post-meta is `footnotes`), so
+      // the old `meta: { _yoast_wpseo_* }` block was dead weight WordPress
+      // silently dropped. The aipickd-seo-meta mu-plugin builds the <head> meta
+      // description from the post EXCERPT (its documented fallback), so writing
+      // `excerpt` is what actually makes the new description render live.
       console.log("      Updating WordPress...");
       await wpUpdate(article.wp_post_id, {
         title: newTitle,
         excerpt: newMeta,
-        meta: {
-          _yoast_wpseo_title: newTitle,
-          _yoast_wpseo_metadesc: newMeta,
-        },
       });
       console.log("      WP updated.");
 
@@ -328,8 +377,8 @@ Return JSON: { "title": "...", "meta_description": "...", "title_chars": N, "met
       beforeAfter.push({ old: article.title, new: newTitle });
       console.log("      Done.\n");
     } catch (err) {
-      console.error(`      Error: ${err.message.slice(0, 200)}\n`);
-      results.failed.push({ title: shortTitle, error: err.message.slice(0, 120) });
+      console.error(`      Error: ${err.message.slice(0, 300)}\n`);
+      results.failed.push({ title: shortTitle, error: err.message.slice(0, 240) });
       // continue-on-error: don't let one failure stop the batch
     }
 
@@ -375,7 +424,7 @@ Return JSON: { "title": "...", "meta_description": "...", "title_chars": N, "met
 
     const failNote =
       results.failed.length > 0
-        ? `\n\n${results.failed.length} article(s) failed — check logs.`
+        ? `\n\n⚠️ ${results.failed.length} failed. First error: ${results.failed[0].error}`
         : "";
 
     await notifyPipeline(
@@ -390,15 +439,21 @@ Return JSON: { "title": "...", "meta_description": "...", "title_chars": N, "met
   }
 
   if (!DRY_RUN && results.failed.length > 0 && results.refreshed.length === 0) {
+    // Surface the ACTUAL error (not "check logs") — the CI log needs auth to
+    // read, so the alert itself must carry the diagnostic detail.
     await notifyAlert(
-      `Title Refresh failed for all ${results.failed.length} article(s). Check logs.`,
+      `Title Refresh failed for all ${results.failed.length} article(s).\n` +
+        `First error: ${results.failed[0].error}`,
       "warning"
     ).catch(() => {});
   }
 
   console.log("\n   Done.\n");
 
-  if (results.failed.length > 0) {
+  // Only fail the CI step when we made ZERO progress. A partial run (some
+  // refreshed, some failed) still advanced the backlog — flagging it red just
+  // trains us to ignore the alert. Failures are still reported to Discord above.
+  if (results.refreshed.length === 0 && results.failed.length > 0) {
     process.exitCode = 1;
   }
 })().catch((err) => {
