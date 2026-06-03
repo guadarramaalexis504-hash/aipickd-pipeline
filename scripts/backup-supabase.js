@@ -17,12 +17,12 @@
 const fs = require("fs");
 const path = require("path");
 
-const envPath = path.join(__dirname, "..", ".env");
-const env = {};
-fs.readFileSync(envPath, "utf8").split("\n").forEach((line) => {
-  const m = line.match(/^([A-Z_]+)="?([^"\n]*)"?$/);
-  if (m) env[m[1]] = m[2];
-});
+const { loadEnv } = require("./lib/env");
+// loadEnv resolves process.env first (GitHub Actions has NO .env file) then
+// falls back to the local .env. The old inline reader read ONLY the .env file
+// with no process.env fallback → readFileSync threw ENOENT on every CI run,
+// which is why "Database Backup" had been red since 2026-05-29.
+const env = loadEnv();
 
 const TABLES = ["articles", "keywords", "niches", "affiliates", "system_config"];
 const OUT_DIR = path.join(__dirname, "..", "backup");

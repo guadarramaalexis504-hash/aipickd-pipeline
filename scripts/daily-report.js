@@ -19,14 +19,12 @@
 const fs = require('fs');
 const path = require('path');
 
-const envPath = path.join(__dirname, '..', '.env');
-const env = {};
-try {
-  fs.readFileSync(envPath, 'utf8').split('\n').forEach((line) => {
-    const m = line.match(/^([A-Z0-9_]+)="?([^"\n]*)"?$/);
-    if (m) env[m[1]] = m[2];
-  });
-} catch {}
+const { loadEnv } = require('./lib/env');
+// loadEnv resolves process.env first (CI has NO .env file) then the local .env.
+// The old inline reader read ONLY .env, so in CI `env.SUPABASE_URL` was
+// undefined and every supa() call hit `undefined/rest/v1/...` → the daily
+// digest had been failing silently since late May.
+const env = loadEnv();
 
 const { notifyDailyDigest, notifyBudgetAlert } = require('./notify.js');
 
