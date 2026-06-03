@@ -38,6 +38,9 @@ be the JSON on one line, or set `GOOGLE_APPLICATION_CREDENTIALS` to the file pat
 The weekly **"GSC CTR Report"** workflow (and `node scripts/gsc-ctr-report.js`)
 will now:
 - Store `gsc_impressions / gsc_clicks / gsc_ctr / gsc_position` on each article.
+- Store page/query/device/date detail rows in `gsc_query_metrics`, with unmatched
+  URLs kept for review instead of discarded.
+- Store each import summary in `gsc_import_runs`.
 - Post the **top CTR opportunities** (high impressions, low CTR) to Discord
   `#pipeline-status` — your prioritized fix list.
 

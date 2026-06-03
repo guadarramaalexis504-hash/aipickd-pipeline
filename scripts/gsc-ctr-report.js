@@ -1,28 +1,20 @@
 #!/usr/bin/env node
 /**
- * AIPickd — Google Search Console CTR opportunity report
+ * AIPickd - Google Search Console CTR opportunity report
  *
- * Pulls the last 28 days of Search Console data, matches each page to its
- * article, stores the metrics (gsc_impressions/clicks/ctr/position), and
- * surfaces the BIGGEST CTR opportunities: pages with many impressions but a
- * low click-through rate. Those are exactly where a better title/meta turns
- * existing visibility into clicks — the core "impressions but no clicks" fix.
- *
- * Auth: a Google service account with read access to the Search Console
- * property. No heavy SDK — signs an RS256 JWT with the built-in crypto module.
+ * Pulls Search Console data, matches each page to its article, stores article
+ * summary metrics in articles.gsc_*, stores detail rows by page/query/device/
+ * date, and surfaces the biggest CTR opportunities.
  *
  * Required env (see docs/GSC-SETUP.md):
- *   GOOGLE_SEARCH_CONSOLE_SITE   e.g. "https://aipickd.com/" or "sc-domain:aipickd.com"
- *   GOOGLE_SERVICE_ACCOUNT_JSON  the full service-account JSON (string), OR
- *   GOOGLE_APPLICATION_CREDENTIALS  a path to that JSON file
- *
- * Gracefully no-ops (exit 0) with setup instructions if creds are missing, so
- * it's safe to wire into a cron before you've finished the Google setup.
+ *   GOOGLE_SEARCH_CONSOLE_SITE      e.g. "https://aipickd.com/" or "sc-domain:aipickd.com"
+ *   GOOGLE_SERVICE_ACCOUNT_JSON     full service-account JSON string, OR
+ *   GOOGLE_APPLICATION_CREDENTIALS  path to that JSON file
  *
  * Usage:
- *   node scripts/gsc-ctr-report.js                 # last 28 days
+ *   node scripts/gsc-ctr-report.js
  *   node scripts/gsc-ctr-report.js --days 90
- *   node scripts/gsc-ctr-report.js --dry-run       # don't write metrics to Supabase
+ *   node scripts/gsc-ctr-report.js --dry-run
  */
 
 "use strict";
@@ -41,9 +33,12 @@ const DRY_RUN = argv.includes("--dry-run");
 const daysIdx = argv.indexOf("--days");
 const DAYS = daysIdx >= 0 ? Math.max(1, parseInt(argv[daysIdx + 1], 10) || 28) : 28;
 
-// CTR opportunity thresholds
-const MIN_IMPRESSIONS = 20;   // ignore noise
-const LOW_CTR = 0.015;        // < 1.5% with real impressions = opportunity
+const MIN_IMPRESSIONS = 20;
+const LOW_CTR = 0.015;
+const PAGE_DIMENSIONS = ["page"];
+const DETAIL_DIMENSIONS = ["page", "query", "device", "date"];
+const SEARCH_TYPE = "web";
+const ROW_LIMIT = Math.max(1, parseInt(env.GSC_ROW_LIMIT || process.env.GSC_ROW_LIMIT || "25000", 10) || 25000);
 
 function b64url(buf) {
   return Buffer.from(buf).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
@@ -56,7 +51,11 @@ function loadServiceAccount() {
     if (path && fs.existsSync(path)) raw = fs.readFileSync(path, "utf8");
   }
   if (!raw) return null;
-  try { return JSON.parse(raw); } catch (e) { throw new Error("GOOGLE_SERVICE_ACCOUNT_JSON is not valid JSON"); }
+  try {
+    return JSON.parse(raw);
+  } catch (e) {
+    throw new Error("GOOGLE_SERVICE_ACCOUNT_JSON is not valid JSON");
+  }
 }
 
 async function getAccessToken(sa) {
@@ -80,32 +79,35 @@ async function getAccessToken(sa) {
     body: `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=${jwt}`,
   }, { timeout: 20000, retries: 2, allowedHosts: ["oauth2.googleapis.com"] });
   const data = await res.json();
-  if (!res.ok || !data.access_token) throw new Error(`Token exchange failed: ${JSON.stringify(data).slice(0, 200)}`);
+  if (!res.ok || !data.access_token) {
+    throw new Error(`Token exchange failed: ${JSON.stringify(data).slice(0, 200)}`);
+  }
   return data.access_token;
 }
 
-async function querySearchConsole(token, site, startDate, endDate) {
+async function querySearchConsole(token, site, startDate, endDate, dimensions = PAGE_DIMENSIONS) {
   const url = `https://searchconsole.googleapis.com/webmasters/v3/sites/${encodeURIComponent(site)}/searchAnalytics/query`;
   const res = await fetchWithRetry(url, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ startDate, endDate, dimensions: ["page"], rowLimit: 5000 }),
+    body: JSON.stringify({ startDate, endDate, dimensions, rowLimit: ROW_LIMIT }),
   }, { timeout: 30000, retries: 2, allowedHosts: ["searchconsole.googleapis.com"] });
   const data = await res.json();
   if (!res.ok) throw new Error(`GSC query failed: ${JSON.stringify(data).slice(0, 250)}`);
   return data.rows || [];
 }
 
-async function supa(method, endpoint, body) {
+async function supa(method, endpoint, body, opts = {}) {
   const res = await fetchWithRetry(`${env.SUPABASE_URL}/rest/v1/${endpoint}`, {
     method,
     headers: {
       apikey: env.SUPABASE_SERVICE_ROLE_KEY,
       Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
       "Content-Type": "application/json",
+      Prefer: opts.prefer || "return=representation",
     },
     body: body ? JSON.stringify(body) : undefined,
-  }, { timeout: 30000, retries: 3 });
+  }, { timeout: opts.timeout || 30000, retries: opts.retries ?? 3 });
   const text = await res.text();
   if (!res.ok) throw new Error(`Supa ${endpoint}: ${res.status} ${text.slice(0, 200)}`);
   return text ? JSON.parse(text) : null;
@@ -114,85 +116,191 @@ async function supa(method, endpoint, body) {
 const normUrl = (u) => (u || "").toLowerCase().replace(/^https?:\/\//, "").replace(/\/+$/, "").replace(/^www\./, "");
 const isoDate = (d) => d.toISOString().slice(0, 10);
 
-(async () => {
+function buildArticleUrlMap(articles) {
+  const byUrl = new Map();
+  for (const a of articles || []) {
+    if (a.wp_url) byUrl.set(normUrl(a.wp_url), a);
+    if (a.slug) byUrl.set(normUrl(`https://aipickd.com/${a.slug}`), a);
+  }
+  return byUrl;
+}
+
+function rowMetric(row) {
+  return {
+    impressions: Math.round(row.impressions || 0),
+    clicks: Math.round(row.clicks || 0),
+    ctr: Number((row.ctr || 0).toFixed(4)),
+    position: Number((row.position || 0).toFixed(2)),
+  };
+}
+
+function toArticleMetricUpdates(pageRows, byUrl, updatedAt) {
+  const updates = [];
+  for (const r of pageRows || []) {
+    const pageUrl = r.keys && r.keys[0];
+    const article = byUrl.get(normUrl(pageUrl));
+    if (!article) continue;
+    updates.push({
+      article,
+      pageUrl,
+      ...rowMetric(r),
+      gsc_updated_at: updatedAt,
+    });
+  }
+  return updates;
+}
+
+function toGscDetailRows(rows, byUrl, opts) {
+  return (rows || []).map((r) => {
+    const keys = r.keys || [];
+    const pageUrl = keys[0] || "";
+    const normalizedPageUrl = normUrl(pageUrl);
+    const article = byUrl.get(normalizedPageUrl);
+    return {
+      import_run_id: opts.importRunId,
+      article_id: article ? article.id : null,
+      page_url: pageUrl,
+      normalized_page_url: normalizedPageUrl,
+      query: keys[1] || "",
+      device: keys[2] || "",
+      row_date: keys[3] || null,
+      search_type: SEARCH_TYPE,
+      start_date: opts.startDate,
+      end_date: opts.endDate,
+      imported_at: opts.importedAt,
+      ...rowMetric(r),
+    };
+  });
+}
+
+function chunk(arr, size) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
+async function insertDetailRows(rows) {
+  for (const batch of chunk(rows, 100)) {
+    await supa("POST", "gsc_query_metrics", batch, { prefer: "return=minimal" });
+  }
+}
+
+async function main() {
   const sa = loadServiceAccount();
   const site = env.GOOGLE_SEARCH_CONSOLE_SITE || process.env.GOOGLE_SEARCH_CONSOLE_SITE;
 
   if (!sa || !site) {
-    console.log("\n⏭️  GSC report skipped — Google credentials not configured yet.");
+    console.log("\nGSC report skipped - Google credentials not configured yet.");
     console.log("   Missing:" + (!sa ? " GOOGLE_SERVICE_ACCOUNT_JSON" : "") + (!site ? " GOOGLE_SEARCH_CONSOLE_SITE" : ""));
-    console.log("   Setup guide: docs/GSC-SETUP.md  (≈10 min, then this runs automatically)\n");
-    return; // exit 0 — safe no-op
+    console.log("   Setup guide: docs/GSC-SETUP.md\n");
+    return;
   }
 
-  console.log(`\n📊 GSC CTR report — last ${DAYS} days${DRY_RUN ? " [DRY RUN]" : ""}\n`);
+  console.log(`\nGSC CTR report - last ${DAYS} days${DRY_RUN ? " [DRY RUN]" : ""}\n`);
 
   const token = await getAccessToken(sa);
-  const end = new Date(Date.now() - 2 * 86400000);   // GSC data lags ~2 days
-  const start = new Date(end.getTime() - DAYS * 86400000);
-  const rows = await querySearchConsole(token, site, isoDate(start), isoDate(end));
-  console.log(`   Pulled ${rows.length} page rows from Search Console.`);
+  const end = new Date(Date.now() - 2 * 86400000);
+  const start = new Date(end.getTime() - (DAYS - 1) * 86400000);
+  const startDate = isoDate(start);
+  const endDate = isoDate(end);
+  const importedAt = new Date().toISOString();
 
-  // Map article URLs → ids
+  const rows = await querySearchConsole(token, site, startDate, endDate, PAGE_DIMENSIONS);
+  const detailRowsRaw = await querySearchConsole(token, site, startDate, endDate, DETAIL_DIMENSIONS);
+  console.log(`   Pulled ${rows.length} page rows and ${detailRowsRaw.length} query/device rows from Search Console.`);
+
   const articles = await supa("GET", "articles?select=id,title,wp_url,slug&wp_url=not.is.null&status=eq.published");
-  const byUrl = new Map();
-  for (const a of articles) {
-    byUrl.set(normUrl(a.wp_url), a);
-    if (a.slug) byUrl.set(normUrl(`https://aipickd.com/${a.slug}`), a);
-  }
+  const byUrl = buildArticleUrlMap(articles);
+  const importRunId = crypto.randomUUID();
+  const detailRows = toGscDetailRows(detailRowsRaw, byUrl, {
+    importRunId,
+    startDate,
+    endDate,
+    importedAt,
+  });
+  const matchedDetail = detailRows.filter((r) => r.article_id).length;
 
-  let matched = 0;
+  const updates = toArticleMetricUpdates(rows, byUrl, importedAt);
   const opportunities = [];
-  for (const r of rows) {
-    const pageUrl = r.keys && r.keys[0];
-    const a = byUrl.get(normUrl(pageUrl));
-    if (!a) continue;
-    matched++;
-    const impressions = Math.round(r.impressions || 0);
-    const clicks = Math.round(r.clicks || 0);
-    const ctr = r.ctr || 0;
-    const position = r.position || 0;
+  for (const update of updates) {
+    const { article, pageUrl, impressions, clicks, ctr, position } = update;
 
     if (!DRY_RUN) {
-      await supa("PATCH", `articles?id=eq.${a.id}`, {
+      await supa("PATCH", `articles?id=eq.${article.id}`, {
         gsc_impressions: impressions,
         gsc_clicks: clicks,
-        gsc_ctr: Number(ctr.toFixed(4)),
-        gsc_position: Number(position.toFixed(2)),
-        gsc_updated_at: new Date().toISOString(),
-      }).catch((e) => console.warn(`   patch ${a.id} failed: ${e.message.slice(0, 80)}`));
+        gsc_ctr: ctr,
+        gsc_position: position,
+        gsc_updated_at: update.gsc_updated_at,
+      }).catch((e) => console.warn(`   patch ${article.id} failed: ${e.message.slice(0, 80)}`));
     }
 
-    // Opportunity: real visibility, weak CTR (and not already top-CTR)
     if (impressions >= MIN_IMPRESSIONS && ctr < LOW_CTR) {
-      opportunities.push({ title: a.title, url: pageUrl, impressions, clicks, ctr, position });
+      opportunities.push({ title: article.title, url: pageUrl, impressions, clicks, ctr, position });
     }
+  }
+
+  if (!DRY_RUN) {
+    await supa("POST", "gsc_import_runs", {
+      id: importRunId,
+      property_url: site,
+      start_date: startDate,
+      end_date: endDate,
+      dimensions: DETAIL_DIMENSIONS,
+      search_type: SEARCH_TYPE,
+      rows_fetched: detailRows.length,
+      rows_matched: matchedDetail,
+      rows_unmatched: detailRows.length - matchedDetail,
+      notes: `Imported by gsc-ctr-report.js (${DAYS}d window).`,
+    }, { prefer: "return=minimal" });
+    await insertDetailRows(detailRows);
   }
 
   opportunities.sort((x, y) => y.impressions - x.impressions);
 
-  console.log(`   Matched ${matched}/${rows.length} rows to articles.`);
-  console.log(`\n🎯 TOP CTR OPPORTUNITIES (high impressions, low CTR — fix titles/meta here first):\n`);
+  const unmatched = detailRows.length - matchedDetail;
+  console.log(`   Matched ${updates.length}/${rows.length} page rows to articles.`);
+  console.log(`   ${DRY_RUN ? "Would store" : "Stored"} ${detailRows.length} detail rows (${matchedDetail} matched, ${unmatched} unmatched).`);
+  if (unmatched > 0) {
+    const examples = detailRows.filter((r) => !r.article_id).slice(0, 5).map((r) => r.page_url).join(", ");
+    if (examples) console.log(`   Unmatched examples: ${examples}`);
+  }
+
+  console.log("\nTOP CTR OPPORTUNITIES (high impressions, low CTR - fix titles/meta here first):\n");
   const top = opportunities.slice(0, 15);
   if (top.length === 0) {
-    console.log("   (none yet — either low traffic so far, or CTR already healthy)");
+    console.log("   (none yet - either low traffic so far, or CTR already healthy)");
   } else {
     for (const o of top) {
-      console.log(`   ${String(o.impressions).padStart(5)} impr · ${(o.ctr * 100).toFixed(1)}% CTR · pos ${o.position.toFixed(1)} — ${o.title.slice(0, 50)}`);
+      console.log(`   ${String(o.impressions).padStart(5)} impr - ${(o.ctr * 100).toFixed(1)}% CTR - pos ${o.position.toFixed(1)} - ${o.title.slice(0, 50)}`);
     }
   }
 
-  // Discord summary
   if (!DRY_RUN && top.length > 0) {
-    const lines = top.slice(0, 8).map((o) => `• ${o.impressions} impr · ${(o.ctr * 100).toFixed(1)}% CTR — ${o.title.slice(0, 45)}`).join("\n");
+    const lines = top.slice(0, 8)
+      .map((o) => `- ${o.impressions} impr - ${(o.ctr * 100).toFixed(1)}% CTR - ${o.title.slice(0, 45)}`)
+      .join("\n");
     await notify.notifyPipeline(
-      `**GSC CTR report (${DAYS}d):** ${matched} pages tracked, ${opportunities.length} CTR opportunities.\nFix titles/meta on these first:\n${lines}`,
+      `**GSC CTR report (${DAYS}d):** ${updates.length} pages tracked, ${detailRows.length} query/device rows, ${opportunities.length} CTR opportunities.\nFix titles/meta on these first:\n${lines}`,
       {}
     ).catch(() => {});
   }
 
-  console.log(`\n✅ Done. ${opportunities.length} opportunities flagged${DRY_RUN ? " (dry run — not stored)" : " (stored in articles.gsc_*)"}.\n`);
-})().catch((e) => {
-  console.error("❌ GSC report error:", e.message);
-  process.exit(1);
-});
+  console.log(`\nDone. ${opportunities.length} opportunities flagged${DRY_RUN ? " (dry run - not stored)" : " (stored in articles.gsc_* and gsc_query_metrics)"}.\n`);
+}
+
+if (require.main === module) {
+  main().catch((e) => {
+    console.error("GSC report error:", e.message);
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  buildArticleUrlMap,
+  chunk,
+  normUrl,
+  rowMetric,
+  toArticleMetricUpdates,
+  toGscDetailRows,
+};
