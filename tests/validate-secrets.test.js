@@ -25,6 +25,13 @@ test("validate-secrets: passes with all valid values", () => {
   assert.equal(r.status, 0, `stderr: ${r.stderr}\nstdout: ${r.stdout}`);
 });
 
+test("validate-secrets: accepts legacy WP_APP_PASSWORD as WP_ADMIN_PASSWORD fallback", () => {
+  const env = { ...VALID, WP_APP_PASSWORD: VALID.WP_ADMIN_PASSWORD };
+  delete env.WP_ADMIN_PASSWORD;
+  const r = run(env);
+  assert.equal(r.status, 0, `stderr: ${r.stderr}\nstdout: ${r.stdout}`);
+});
+
 test("validate-secrets: fails on missing required key", () => {
   const env = { ...VALID };
   delete env.OPENAI_API_KEY;

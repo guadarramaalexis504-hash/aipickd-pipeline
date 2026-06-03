@@ -1,6 +1,7 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const http = require("node:http");
+const dns = require("node:dns");
 
 const { fetchWithRetry, parseRetryAfter } = require("../scripts/lib/http");
 
@@ -17,6 +18,10 @@ function startServer(handler) {
 test("parseRetryAfter: numeric seconds", () => {
   assert.equal(parseRetryAfter("5"), 5000);
   assert.equal(parseRetryAfter("0"), 0);
+});
+
+test("fetchWithRetry: prefers IPv4 DNS results for Hostinger WordPress", () => {
+  assert.equal(dns.getDefaultResultOrder(), "ipv4first");
 });
 
 test("parseRetryAfter: HTTP date", () => {

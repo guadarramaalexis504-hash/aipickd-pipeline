@@ -51,6 +51,20 @@ test("loadEnv: process.env takes precedence over file", () => {
   fs.rmSync(tmp, { recursive: true, force: true });
 });
 
+test("loadEnv: WP_ADMIN_PASSWORD falls back to legacy WP_APP_PASSWORD", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "env-test-"));
+  const envPath = path.join(tmp, ".env");
+  fs.writeFileSync(envPath, 'WP_APP_PASSWORD="abcd efgh ijkl mnop qrst uvwx"');
+
+  delete process.env.WP_ADMIN_PASSWORD;
+  delete process.env.WP_APP_PASSWORD;
+  const env = loadEnv({ envPath, refresh: true });
+
+  assert.equal(env.WP_ADMIN_PASSWORD, "abcd efgh ijkl mnop qrst uvwx");
+
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
 test("loadEnv: works without a .env file", () => {
   const env = loadEnv({ envPath: "/nonexistent/.env", refresh: true });
   assert.equal(env.PATH !== undefined, true);

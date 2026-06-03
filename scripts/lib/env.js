@@ -15,6 +15,9 @@ const path = require("path");
 
 const ROOT = path.join(__dirname, "..", "..");
 const DEFAULT_ENV_PATH = path.join(ROOT, ".env");
+const ALIASES = {
+  WP_ADMIN_PASSWORD: ["WP_APP_PASSWORD"],
+};
 
 let cache = null;
 
@@ -84,13 +87,31 @@ function loadEnv({ envPath = DEFAULT_ENV_PATH, refresh = false } = {}) {
           // when copy-pasted from terminals or text editors
           return process.env[key].trim();
         }
+        for (const alias of ALIASES[key] || []) {
+          if (process.env[alias] !== undefined && process.env[alias] !== "") {
+            return process.env[alias].trim();
+          }
+        }
+        if (fileEnv[key] !== undefined && fileEnv[key] !== "") {
+          return fileEnv[key];
+        }
+        for (const alias of ALIASES[key] || []) {
+          if (fileEnv[alias] !== undefined && fileEnv[alias] !== "") {
+            return fileEnv[alias];
+          }
+        }
         return fileEnv[key];
       },
       has(_t, key) {
-        return (typeof key === "string" && process.env[key] !== undefined) || key in fileEnv;
+        return (
+          typeof key === "string" &&
+          (process.env[key] !== undefined ||
+            key in fileEnv ||
+            (ALIASES[key] || []).some((alias) => process.env[alias] !== undefined || alias in fileEnv))
+        );
       },
       ownKeys() {
-        return Array.from(new Set([...Object.keys(process.env), ...Object.keys(fileEnv)]));
+        return Array.from(new Set([...Object.keys(process.env), ...Object.keys(fileEnv), ...Object.keys(ALIASES)]));
       },
       getOwnPropertyDescriptor() {
         return { enumerable: true, configurable: true };

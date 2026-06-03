@@ -36,7 +36,7 @@ jobs:
           supabase-url: ${{ secrets.SUPABASE_URL }}
           supabase-service-role-key: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           wp-username: ${{ secrets.WP_USERNAME }}
-          wp-admin-password: ${{ secrets.WP_ADMIN_PASSWORD }}
+          wp-admin-password: ${{ secrets.WP_ADMIN_PASSWORD || secrets.WP_APP_PASSWORD }}
           discord-webhook-alertas: ${{ secrets.DISCORD_WEBHOOK_ALERTAS }}
 
       - name: Run SEO audit (fix mode)

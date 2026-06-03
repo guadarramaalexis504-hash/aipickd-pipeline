@@ -13,6 +13,13 @@
  * dependency from exfiltrating data to an attacker-controlled host.
  */
 
+const dns = require("node:dns");
+
+// Hostinger publishes both AAAA and A records for aipickd.com, but GitHub
+// Actions and some local networks can hang on the IPv6 route. Undici's fetch
+// follows Node's DNS result order, so prefer IPv4 to avoid connect timeouts.
+dns.setDefaultResultOrder("ipv4first");
+
 const DEFAULTS = {
   retries: 3,
   baseDelay: 1000,
