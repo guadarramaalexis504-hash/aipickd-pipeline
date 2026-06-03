@@ -48,6 +48,7 @@ try {
 }
 
 const env = loadEnv();
+const { warmUp } = require("./lib/warmup");
 
 // ── CLI ───────────────────────────────────────────────────────────
 const argv = process.argv.slice(2);
@@ -120,6 +121,11 @@ async function wp(method, endpoint, body) {
   console.log(
     `\n== add-schema-markup ${UPGRADE ? "(UPGRADE)" : "(add-only)"}${DRY_RUN ? " [DRY RUN]" : ""} ==\n`
   );
+
+  // Warm Hostinger before hammering WP — a cold first request would otherwise
+  // time out and cascade into the "all N updates failed. Check WP auth." alert
+  // (which is really a timeout, not an auth problem).
+  if (!DRY_RUN) await warmUp({ log: true }).catch(() => {});
 
   // Map WP category id → slug for breadcrumbs
   let catIdToSlug = {};

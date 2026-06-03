@@ -22,6 +22,7 @@ const { loadEnv } = require("./lib/env");
 const { supa, wp } = require("./lib/clients");
 
 const env = loadEnv();
+const { warmUp } = require("./lib/warmup");
 const { DISCORD_WEBHOOK_ALERTAS } = env;
 
 const FIX_MODE = process.argv.includes("--fix");
@@ -59,6 +60,9 @@ const baseSlug = (slug) => slug.replace(/-\d+$/, "");
 (async () => {
   log("== AIPickd dedup-wordpress ==");
   log(`   Mode: ${FIX_MODE ? "FIX (will delete)" : "DRY RUN (report only)"}\n`);
+
+  // Warm Hostinger before the WP crawl — avoids a cold-start "fetch failed".
+  await warmUp({ log: true }).catch(() => {});
 
   // 1) Fetch all WP posts
   log("1) Fetching all WordPress posts...");

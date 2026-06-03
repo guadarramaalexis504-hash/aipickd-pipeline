@@ -21,6 +21,7 @@
 
 const { notify, notifyUptimeDown, notifyUptimeRestored, notifyAlert } = require("./notify.js");
 const { loadEnv } = require("./lib/env");
+const { warmUp } = require("./lib/warmup");
 
 const env = loadEnv();
 
@@ -58,48 +59,66 @@ const ALERT_ONLY = process.argv.includes("--alert");
 
   const results = [];
 
+  // Warm up Hostinger before checking — absorbs the cold-start that would
+  // otherwise show up as a false "site down" on the very first request.
+  await warmUp({ log: true }).catch(() => {});
+
+  // One attempt at a single URL → returns a result object (throws on nav error).
+  async function checkOnce(check) {
+    const t0 = Date.now();
+    const isXml = check.url.endsWith(".xml");
+    let status, contentLength, title;
+    if (isXml) {
+      // Use raw HTTP request — page.goto on XML returns body length 0 in headless
+      const r = await page.request.get(check.url, { timeout: 30000 });
+      status = r.status();
+      contentLength = (await r.text()).length;
+      title = "";
+    } else {
+      const response = await page.goto(check.url, { waitUntil: "domcontentloaded", timeout: 30000 });
+      status = response.status();
+      title = await page.title().catch(() => "");
+      contentLength = await page.evaluate(() => document.body?.innerHTML?.length || 0);
+    }
+    const loadMs = Date.now() - t0;
+    const minOk = isXml ? 100 : 1000;
+    return {
+      name: check.name, url: check.url, status, loadMs, isXml,
+      title: title.slice(0, 60), bodyLength: contentLength,
+      ok: status >= 200 && status < 400 && contentLength > minOk,
+    };
+  }
+
+  // 2-STRIKES: a single cold-start timeout on shared hosting is NOT an outage.
+  // Only record an issue if a URL fails TWICE, with a re-warm in between. This
+  // is what kills the "site down" false alarms that were spamming #alertas.
   for (const check of urlsToCheck) {
-    try {
-      const t0 = Date.now();
-      const isXml = check.url.endsWith(".xml");
-      let status, contentLength, title;
-      if (isXml) {
-        // Use raw HTTP request — page.goto on XML returns body length 0 in headless
-        const r = await page.request.get(check.url, { timeout: 30000 });
-        status = r.status();
-        const txt = await r.text();
-        contentLength = txt.length;
-        title = "";
-      } else {
-        const response = await page.goto(check.url, { waitUntil: "domcontentloaded", timeout: 30000 });
-        status = response.status();
-        title = await page.title().catch(() => "");
-        contentLength = await page.evaluate(() => document.body?.innerHTML?.length || 0);
+    let result = null, errMsg = null;
+    for (let strike = 1; strike <= 2; strike++) {
+      try {
+        result = await checkOnce(check);
+        if (result.ok) break; // success — no second strike needed
+        errMsg = `HTTP ${result.status} (content ${result.bodyLength} bytes)`;
+      } catch (e) {
+        result = null;
+        errMsg = e.message.split("\n")[0].slice(0, 100);
       }
-      const loadMs = Date.now() - t0;
-      const minOk = isXml ? 100 : 1000;
+      if (strike === 1) {
+        await warmUp({ attempts: 2 }).catch(() => {}); // re-wake before retry
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+    }
 
-      const result = {
-        name: check.name,
-        url: check.url,
-        status,
-        loadMs,
-        title: title.slice(0, 60),
-        bodyLength: contentLength,
-        ok: status >= 200 && status < 400 && contentLength > minOk,
-      };
+    if (result && result.ok) {
       results.push(result);
-
-      if (!result.ok) {
-        issues.push(`${check.name}: HTTP ${status} (content ${contentLength} bytes)`);
-      } else if (!isXml && loadMs > 5000) {
-        issues.push(`${check.name}: slow (${loadMs}ms) - consider Cloudflare`);
+      if (!result.isXml && result.loadMs > 5000) {
+        issues.push(`${check.name}: slow (${result.loadMs}ms) - consider Cloudflare`);
       }
-
-      console.log(`  ${result.ok ? "✅" : "❌"} ${check.name.padEnd(20)} ${status} ${loadMs}ms ${(contentLength/1024).toFixed(0)}KB`);
-    } catch (e) {
-      issues.push(`${check.name}: ${e.message.slice(0, 100)}`);
-      console.log(`  ❌ ${check.name}: ${e.message.slice(0, 80)}`);
+      console.log(`  ✅ ${check.name.padEnd(20)} ${result.status} ${result.loadMs}ms ${(result.bodyLength / 1024).toFixed(0)}KB`);
+    } else {
+      if (result) results.push(result);
+      issues.push(`${check.name}: ${errMsg} (failed 2×)`);
+      console.log(`  ❌ ${check.name}: ${errMsg} (failed 2×)`);
     }
   }
 
@@ -131,7 +150,7 @@ const ALERT_ONLY = process.argv.includes("--alert");
     issues.forEach((i) => console.log(`    - ${i}`));
 
     // Alert via notifications — route to #alertas channel
-    const isSiteDown = issues.some(i => i.includes("HTTP 5") || i.includes("ERR_") || i.includes("timeout"));
+    const isSiteDown = issues.some(i => /HTTP 5|ERR_|timeout|failed 2×/i.test(i));
     if (isSiteDown) {
       const firstResult = results.find(r => !r.ok);
       const statusCode = firstResult?.status || null;
