@@ -26,6 +26,7 @@
 const { loadEnv } = require("./lib/env");
 const { fetchWithRetry } = require("./lib/http");
 const { NICHE_TO_CATEGORY_SLUG } = require("./lib/schema");
+const { warmUp } = require("./lib/warmup");
 
 let notify = { notifyPipeline: async () => {}, notifyAlert: async () => {} };
 try {
@@ -88,6 +89,11 @@ async function wp(method, endpoint, body) {
 
 (async () => {
   console.log(`\n== categorize-posts ${DRY_RUN ? "[DRY RUN]" : ""}${FORCE ? " (force)" : ""} ==\n`);
+
+  // Warm Hostinger before the category writes — this script had NO warm-up and
+  // its writes were cold-starting/timing out in CI, which is why ~65 posts sat
+  // in Uncategorized for days despite the gradual cron supposedly fixing them.
+  if (!DRY_RUN) await warmUp({ log: true }).catch(() => {});
 
   // 1. WP categories: slug → id, and find the Uncategorized id
   const cats = await wp("GET", "categories?per_page=50&_fields=id,slug,name");
