@@ -54,7 +54,13 @@ async function getAllWPPosts() {
 }
 
 // Strip trailing -NUMBER suffix from slug
-const baseSlug = (slug) => slug.replace(/-\d+$/, "");
+// Strip a trailing WP collision suffix (1-3 digits, e.g. "-2" in "...-2026-2")
+// but PRESERVE the 4-digit year ("...-2026"). The old /-\d+$/ stripped the YEAR
+// instead, so "topic-2026" → "topic" and "topic-2026-2" → "topic-2026" landed in
+// DIFFERENT groups and the real duplicates (8 of them, all "...-2026-2") were
+// never detected. WP appends "-2/-3..." on slug collision, so the collision
+// suffix is always 1-3 digits and always comes AFTER the year.
+const baseSlug = (slug) => slug.replace(/-\d{1,3}$/, "");
 
 // --- main ---
 (async () => {

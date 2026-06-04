@@ -6,9 +6,9 @@ on:
   workflow_dispatch:
     inputs:
       limit:
-        description: "Articles to refresh (1-10)"
+        description: "Articles to refresh (1-20)"
         required: false
-        default: "5"
+        default: "12"
       dry_run:
         description: "Dry run (no writes)"
         required: false
@@ -49,7 +49,7 @@ jobs:
 
       - name: Run refresh script
         env:
-          LIMIT: ${{ github.event.inputs.limit || '5' }}
+          LIMIT: ${{ github.event.inputs.limit || '12' }}
           DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
         run: |
           DRY_FLAG=""
