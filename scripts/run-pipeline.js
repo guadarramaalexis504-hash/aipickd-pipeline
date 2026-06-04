@@ -787,6 +787,31 @@ Return JSON: { "variants": ["Title 1", "Title 2"] }`,
       cost: totalCost,
     };
   } catch (e) {
+    // Duplicate-slug (Postgres 23505): a PRIOR run already created the article
+    // for this keyword but died (timeout) before marking the keyword done, so
+    // the orphan-unstucker reset it to `queued`. Re-queuing again re-picks the
+    // SAME keyword forever (poisoned queue → 0 articles/run — the 2026-06-03
+    // outage). Instead reconcile: link the keyword to the existing article +
+    // mark it published, and tell the caller to try the NEXT keyword.
+    if (/23505|duplicate key|already exists/i.test(e.message)) {
+      const dupSlug = (e.message.match(/\(slug\)=\(([^)]+)\)/) || [])[1];
+      try {
+        let artId = null;
+        if (dupSlug) {
+          const existing = await supa("GET", `articles?slug=eq.${encodeURIComponent(dupSlug)}&select=id&limit=1`);
+          artId = Array.isArray(existing) && existing[0] ? existing[0].id : null;
+        }
+        await supa("PATCH", `keywords?id=eq.${kw.id}`, {
+          status: "published",
+          ...(artId ? { assigned_article_id: artId } : {}),
+        });
+        clearOutlineCache(kw.id);
+        console.log(`   ⚠️  Slug "${dupSlug || "?"}" already existed — reconciled keyword (no re-queue).`);
+        return { reconciled: true, reason: `duplicate slug ${dupSlug || ""}`.trim() };
+      } catch (_) {
+        // reconciliation itself failed — fall through to the normal re-queue
+      }
+    }
     await supa("PATCH", `keywords?id=eq.${kw.id}`, { status: "queued" });
     // Outline cache is kept — next run will reuse it and skip outline generation
     throw e;
@@ -1735,9 +1760,18 @@ function startSoftTimeoutWarning(label = "pipeline") {
   let generated = 0;
   if (GEN_COUNT > 0) {
     console.log(`🧠 GENERATION (×${GEN_COUNT})`);
+    let dupRetries = 0;
     for (let i = 0; i < GEN_COUNT; i++) {
       try {
         const res = await generateOne();
+        if (res.reconciled) {
+          // A poisoned keyword (its article already existed) was just cleared.
+          // Don't count it — try ANOTHER keyword so the run still produces.
+          // Capped so a burst of poisoned keywords can't loop forever.
+          if (++dupRetries <= 5) { i--; continue; }
+          console.log(`   Stopped after ${dupRetries} duplicate reconciliations this run.`);
+          break;
+        }
         if (res.skipped) {
           console.log(`   [${i + 1}/${GEN_COUNT}] skipped: ${res.reason}`);
           break;
