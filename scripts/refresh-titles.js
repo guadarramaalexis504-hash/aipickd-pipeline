@@ -147,6 +147,17 @@ async function wpAuthCheck() {
 
 // ── GPT-4o-mini title rewriter ──────────────────────────────────────────────
 async function rewriteTitle(article) {
+  // Rotate the lead angle per-article (deterministic from id/slug) so the site
+  // doesn't end up with 50 near-identical "Which Wins? [Tested]" titles.
+  const ANGLES = [
+    'Lead with a "Which Wins?" curiosity gap.',
+    'Lead with a first-person "We Tested / I Tried / After X hours" angle.',
+    'Lead with a "The Truth / What Nobody Tells You" knowledge gap.',
+    'Lead with a specific number + "Actually Work / Ranked".',
+    'Lead with a "Worth It?" value question.',
+  ];
+  const seed = [...String(article.id || article.slug || article.title || "")].reduce((s, c) => s + c.charCodeAt(0), 0);
+  const angleHint = ANGLES[seed % ANGLES.length];
   const systemPrompt = `You are an SEO headline specialist optimizing for Google SERP click-through rate.
 
 Rewrite the title and meta description for this AI tools article.
@@ -155,19 +166,19 @@ Current title: "${article.title}"
 Primary keyword: "${article.primary_keyword}"
 Article type: "${article.article_type}"
 
-TITLE RULES (50-60 chars):
-- Include the primary keyword naturally
-- End with "2026" or "(2026)" or "[2026]"
-- MUST use at least ONE psychological hook:
-  * Brackets: [Free], [Tested], [Honest], [Updated], [Step-by-Step], [With Pricing]
-  * Power words: Best, Proven, Honest, Worth It, Actually Work
-  * Numbers: specific counts (7, 10, 5)
-  * Curiosity: "Worth It?", "Which Wins?", "You Need to Know"
-- Match article type formulas:
-  * comparison: "X vs Y: Which One Wins in 2026?" or "X vs Y — Honest Comparison [2026]"
-  * review: "X Review: Worth It in 2026? [Tested]"
-  * listicle: "7 Best X That Actually Work [2026]"
-  * how-to: "How to X in 2026 [Step-by-Step]"
+TITLE RULES (40-60 chars — Backlinko's highest-CTR range):
+- Include the primary keyword; END with the year (2026 / (2026) / [2026]); front-load the hook.
+- Numbers lift CTR ~36% — add a SPECIFIC number when it fits (7, 9, $0, "30 Days", "20 Tested").
+- Use 2-3 TRUST power words: Honest, Tested, Proven, Actually Work, Worth It, Real, Ranked.
+- Open a curiosity/knowledge gap or a clear STAKE: "Which Wins?", "Worth It?", "The Truth", "What Nobody Tells You".
+- A first-person testing angle builds trust + intrigue: "We Tested", "I Tried", "After 50 Hours".
+- ONE bracket value-add max: [Tested] [Honest] [Free] [Ranked] [Step-by-Step].
+- High-CTR formulas by type — pick the PUNCHIEST and VARY them:
+  * comparison: "X vs Y: Which Wins in 2026? [Tested]" / "X vs Y — I Tested Both, Here's the Winner"
+  * review: "X Review 2026: Worth It? [Tested]" / "X Review: The Truth After Testing [2026]"
+  * listicle: "7 Best X That Actually Work in 2026 [Tested]" / "Top 7 X: We Tested 20, These Won (2026)"
+  * how-to: "How to X in 2026 [Step-by-Step]" / "How to X Without Y — 2026 Guide"
+- NEVER flat/boring: "Best X 2026", "X Guide", "Everything About X", "Ultimate Guide to X".
 
 META DESCRIPTION RULES (150-160 chars):
 - Start with a benefit or result, not "In this article..."
@@ -178,6 +189,8 @@ META DESCRIPTION RULES (150-160 chars):
 BANNED phrases (in BOTH title and meta) — these are AI-tells that read as spam and hurt CTR. NEVER use them:
 "elevate your", "unlock (your|the) potential", "supercharge", "take it to the next level", "in today's (fast-paced )?world", "game-changer", "game changer", "seamless(ly)?", "revolutionize", "dive into", "harness the power", "look no further", "in the realm of", "when it comes to".
 Write like a sharp, specific human reviewer — concrete nouns and numbers, not hype.
+
+PREFERRED ANGLE for THIS title (keeps titles varied across the site, not 50 identical patterns): ${angleHint}
 
 Return JSON: { "title": "...", "meta_description": "...", "title_chars": N, "meta_chars": N }`;
 

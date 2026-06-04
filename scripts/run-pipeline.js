@@ -483,22 +483,22 @@ CRITICAL: All references must be 2026. If the keyword has a year, use 2026. Neve
 CRITICAL: The outline MUST have at least 10 H2 sections. Each section must have word_target >= 250. Total word_targets must sum to 3000+.
 CRITICAL: Include a dedicated "FAQ" section as the last H2 with 6 substantive questions.
 
-TITLE ENGINEERING (this is CRITICAL for CTR — a boring title = zero clicks):
-- 50-60 chars, MUST include primary keyword naturally and end with "2026" or "(2026)"
-- MUST use ONE of these high-CTR formulas (pick the best fit for the article type):
-  * Comparison: "X vs Y: Honest Comparison [2026]" or "X vs Y — Which One Wins in 2026?"
-  * Review: "X Review: Worth It in 2026? [Tested]" or "X Review — Pros, Cons & Pricing (2026)"
-  * Listicle: "7 Best X for Y in 2026 [Free Options]" or "Top 10 X That Actually Work (2026)"
-  * How-to: "How to X in 2026 [Step-by-Step]" or "X Made Easy: Complete Guide (2026)"
-  * Alternative: "5 Best X Alternatives in 2026 [Cheaper]"
-- REQUIRED psychological hooks (use at least ONE):
-  * Brackets: [Free], [Tested], [Honest], [Updated], [Step-by-Step], [With Pricing]
-  * Power words: Best, Proven, Honest, Ultimate, Worth It, Actually Work
-  * Numbers: specific counts (7, 10, 5), pricing ($0, $29/mo)
-  * Curiosity gaps: "Worth It?", "Which One Wins?", "You Need to Know"
-- NEVER write flat titles like "Best AI Tools for Writing 2026" — that is BORING
-- Good: "7 Best AI Writing Tools That Actually Work [2026]"
-- Bad: "Best AI Writing Tools 2026"
+TITLE ENGINEERING — the single biggest CTR lever (a flat title = zero clicks). Research-backed (Backlinko, Copyblogger):
+- 40-60 chars (highest SERP CTR). Front-load the hook; include the primary keyword naturally; END with the year (2026 / (2026) / [2026]).
+- Numbers lift CTR ~36% — use a SPECIFIC number when it fits (7, 9, $0, "30 Days", "20 Tested").
+- Use 2-3 TRUST power words: Honest, Tested, Proven, Actually Work, Worth It, Real, Ranked, Data-Backed.
+- Open a curiosity / knowledge gap or a clear STAKE — a reason to click NOW ("Which Wins?", "Worth It?", "The Truth", "What Nobody Tells You").
+- A first-person testing angle reads as trustworthy and intriguing: "We Tested", "I Tried", "After 50 Hours".
+- ONE bracket value-add max: [Tested] [Honest] [Free] [Ranked] [Step-by-Step].
+HIGH-CTR FORMULAS by type — pick the PUNCHIEST fit and VARY them (never reuse one pattern run-to-run):
+  * comparison: "X vs Y: Which Wins in 2026? [Tested]" / "X vs Y — I Tested Both, Here's the Winner" / "X vs Y: The Honest 2026 Verdict"
+  * review:     "X Review 2026: Worth It? [Tested]" / "Is X Worth It in 2026? Honest Review" / "X Review: The Truth After Testing [2026]"
+  * listicle:   "7 Best X That Actually Work in 2026 [Tested]" / "9 Best X for Y (Free + Paid, Ranked 2026)" / "Top 7 X in 2026: We Tested 20, These Won"
+  * how-to:     "How to X in 2026 [Step-by-Step]" / "How to X Without Y — 2026 Guide"
+  * alternative:"7 Best X Alternatives in 2026 [Cheaper + Free]"
+BANNED — boring (kills CTR): "Best X 2026", "X Guide", "Everything About X", "Ultimate Guide to X", "A Comprehensive Look at X".
+BANNED — hype clichés (read as AI spam): "elevate", "unlock your potential", "supercharge", "game-changer", "revolutionary", "seamless", "dive into".
+Good: "7 AI Writing Tools We Tested — Only 3 Actually Work [2026]"  ·  Bad: "Best AI Writing Tools 2026"
 
 Return a JSON object with keys: title (50-60 chars, high-CTR formula as described above), slug (kebab-case with "2026"), meta_description (150-160 chars, MUST follow these CTR rules: start with a benefit/result NOT "In this article" or "Learn about", include primary keyword in first 80 chars, end with curiosity hook or CTA like "See the results" or "Find out which wins", use a number or specific detail when possible. Example: "We tested 7 AI writing tools head-to-head. Here's which one actually delivers for small businesses in 2026."), primary_keyword, lsi_keywords (array of 5-7), target_word_count (must be 3000), article_type, sections (array of AT LEAST 10 objects with: heading, level, bullets array of 4-6 items, word_target number >= 250), faqs (array of 6 question strings), internal_link_ideas (array of strings).`,
         2500,
