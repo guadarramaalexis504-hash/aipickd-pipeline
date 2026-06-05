@@ -27,6 +27,7 @@ const { fetchWithRetry } = require("./lib/http");
 const { publishKey: idempotencyPublishKey } = require("./lib/idempotency");
 const { validateRenderedHtml } = require("./lib/html-validator");
 const { ping: hcPing } = require("./lib/heartbeat");
+const { warmUp } = require("./lib/warmup");
 const { buildSchemas, renderSchemaBlock, NICHE_TO_CATEGORY_SLUG } = require("./lib/schema");
 
 /**
@@ -1333,19 +1334,30 @@ async function publishAllDrafts(maxCount = 10) {
   const publishedTitles = (publishedArticles || []).map(a => normalizeTitle(a.title));
   trace(`pre-loaded ${publishedTitles.length} published titles for dup detection`);
 
-  // Get WP categories once. If this throws, publishAllDrafts throws → run fails
-  // fast (visible) instead of silently no-oping.
-  let cats;
+  // Warm the (possibly 4h-idle) Hostinger shared host BEFORE the first WP call.
+  // On GitHub Actions this categories GET is the first hit after a long idle, so
+  // it cold-starts (slow TLS / LiteSpeed 5xx). warmUp pings the homepage until
+  // the site answers quickly; it never throws.
+  await warmUp({ log: true }).catch(() => {});
+
+  // Get WP categories once. Categories are a NICE-TO-HAVE: the post still
+  // publishes without one, and categorize-posts.js back-fills it later in the
+  // SAME workflow. So a transient WP blip here must NOT be fatal. This used to
+  // `throw e` → publishAllDrafts died → the WHOLE publish phase exited 1 AFTER
+  // generation had already produced a draft (the 2026-06-04→05 outage: 3 runs
+  // each generated 1 article then crashed right here, 0 published). Now: warm
+  // up, and on failure log + alert + publish UNCATEGORIZED instead of dying.
+  let cats = [];
   try {
     cats = await wp("GET", "categories?per_page=20&_fields=id,slug");
   } catch (e) {
-    const msg = `wp("GET" categories) threw: ${e.message?.slice(0, 200)}`;
-    trace(`❌ ${msg}`);
+    const msg = `wp("GET" categories) failed: ${(e?.message || String(e)).slice(0, 200)}${e?.status ? ` [HTTP ${e.status}]` : ""}`;
+    trace(`⚠️ ${msg} — publishing UNCATEGORIZED this run (categorize-posts.js back-fills)`);
     notifyAlert(
-      `🚨 **publishAllDrafts: WP categories fetch failed** — every iter would crash too. Stopping early.\n\`\`\`\n${msg}\n\`\`\``,
-      "critical"
+      `⚠️ **WP categories fetch falló (NO fatal)** — publicando sin categoría este run; \`categorize-posts.js\` la corrige después.\n\`\`\`\n${msg}\n\`\`\``,
+      "warning"
     ).catch(() => {});
-    throw e;
+    cats = [];
   }
   trace(`fetched ${Array.isArray(cats) ? cats.length : "NON-ARRAY"} WP categories`);
 
@@ -1416,9 +1428,19 @@ async function publishAllDrafts(maxCount = 10) {
       continue;
     }
 
-    // Quality gate + cleanup
-    article.content_markdown = aggressiveClean(article.content_markdown);
-    const qa = qualityGate(article);
+    // Quality gate + cleanup — GUARDED. A throw in aggressiveClean / qualityGate
+    // (or injectToC, moved into the try below) must skip THIS draft, never crash
+    // publishAllDrafts → exit 1 → block ALL publishing (2026-06 outage lesson).
+    let qa;
+    try {
+      article.content_markdown = aggressiveClean(article.content_markdown);
+      qa = qualityGate(article);
+    } catch (prepErr) {
+      skippedCount++;
+      console.log(`   ⏩ skip "${article.title?.slice(0, 50)}": QA prep threw — ${(prepErr?.message || String(prepErr)).slice(0, 120)}`);
+      await supa("PATCH", `articles?id=eq.${article.id}`, { status: "qa_failed", quality_score: 0 }).catch(() => {});
+      continue;
+    }
     // Minimum Viable Approve: if only issue is "too short" (1000-1099w), auto-approve to avoid stalls
     let qaPass = qa.pass;
     if (!qa.pass && qa.issues.length === 1 && qa.issues[0].startsWith('too short')) {
@@ -1447,10 +1469,10 @@ async function publishAllDrafts(maxCount = 10) {
     }
     // (qa passed — either naturally or via min-viable approve)
 
-    // Inject Table of Contents for long articles
-    article.content_markdown = injectToC(article.content_markdown);
-
     try {
+      // Inject Table of Contents for long articles (inside the per-article try
+      // so a ToC parse error skips this draft instead of crashing the run).
+      article.content_markdown = injectToC(article.content_markdown);
       const artLang = (article.language || "en").toLowerCase();
       const isES = artLang === "es";
 
@@ -1948,7 +1970,24 @@ function startSoftTimeoutWarning(label = "pipeline") {
       }
     );
   } catch {}
-})().catch((e) => {
-  console.error("\n❌ FATAL:", e.message);
+})().catch(async (e) => {
+  const message = (e?.message || String(e)).slice(0, 500);
+  const stack = (e?.stack || message).slice(0, 1500);
+  console.error("\n❌ FATAL:", message);
+  // OBSERVABILITY: this used to ONLY console.error → a crash in publishAllDrafts
+  // died invisibly to a CI log we couldn't read, while generation had already
+  // produced a draft. Now the fatal is BOTH alerted to Discord AND recorded to
+  // Supabase (pipeline_config.last_run_error) so it's diagnosable without the log.
+  try {
+    await notifyAlert(
+      `🔥 **Pipeline FATAL (exit 1)**\nEl run murió (la generación pudo haber corrido ya).\n\`\`\`\n${stack.slice(0, 600)}\n\`\`\``,
+      "critical"
+    );
+  } catch (_) {}
+  try {
+    await supa("PATCH", "pipeline_config?id=eq.00000000-0000-0000-0000-000000000001", {
+      last_run_error: { at: new Date().toISOString(), message, stack },
+    });
+  } catch (_) {}
   process.exit(1);
 });
