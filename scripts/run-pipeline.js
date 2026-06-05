@@ -133,12 +133,17 @@ const GPT_MAX_TOKENS_CAP = 12000;
 const GPT_ATTEMPT_TIMEOUT_MS = 90_000; // per-attempt — was 180s
 const GPT_MAX_RETRIES = 2;             // was 3 — third retry rarely succeeds within timeout budget
 
+// Set per-generation by generateOne to force the article language. Prepended to
+// EVERY gpt() system prompt so the whole pipeline (outline, draft, polish, FAQ,
+// titles) writes in the target language. "" = English (default, unchanged).
+let GEN_LANG_DIRECTIVE = "";
+
 async function gpt(model, system, user, maxTokens, jsonMode = false) {
   const body = {
     model,
     max_tokens: Math.min(maxTokens || GPT_MAX_TOKENS_CAP, GPT_MAX_TOKENS_CAP),
     messages: [
-      { role: "system", content: system },
+      { role: "system", content: GEN_LANG_DIRECTIVE + system },
       { role: "user", content: user },
     ],
   };
@@ -407,6 +412,15 @@ async function generateOne() {
   }
 
   console.log(`${ts()} 📝 Keyword: "${kw.keyword}" (${kw.niche?.name})`);
+
+  // ── Language: force Spanish (/es/) generation when the keyword is es ──────
+  const LANG = (kw.language || "en").toLowerCase();
+  const ES = LANG === "es";
+  GEN_LANG_DIRECTIVE = ES
+    ? `🌎 IDIOMA OBLIGATORIO — Escribe ABSOLUTAMENTE TODO en ESPAÑOL DE MÉXICO natural (usa "tú", nunca "usted"), para una audiencia de Latinoamérica. Título, slug, encabezados, cuerpo, tablas, FAQ, "Veredicto rápido", "Puntos clave", cada "Dato clave", y la meta description: TODO en español. JAMÁS en inglés. Suena como un reviewer mexicano que SÍ probó las herramientas en persona. Evita clichés y traducciones literales: "en el mundo actual", "sin duda alguna", "es importante destacar", "en conclusión", "descubre el poder", "lleva tu X al siguiente nivel", "en la era digital", "revoluciona". Los TÍTULOS deben tener gancho (40-60 caracteres, con un número + "2026", ángulo "lo probé/comparé yo"). Ejemplos del estilo: "Probé 7 IAs para crear videos: solo 2 valen la pena", "ChatGPT vs Claude vs Gemini: ¿cuál explica mejor? (2026)", "IA gratis vs de pago: ¿cuándo SÍ vale pagar? (2026)". NUNCA títulos fríos como "Mejores herramientas IA 2026".\n\n`
+    : "";
+  if (ES) console.log(`${ts()} 🇲🇽 Modo ESPAÑOL activado para este artículo`);
+
   await supa("PATCH", `keywords?id=eq.${kw.id}`, { status: "in_progress" });
   let totalCost = 0;
   const genStart = Date.now();
@@ -763,6 +777,7 @@ Return JSON: { "variants": ["Title 1", "Title 2"] }`,
       article_type: correctedType || outline.article_type,
       primary_keyword: outline.primary_keyword || kw.keyword,
       status: "draft",
+      language: LANG,
       generated_by: "gpt-only",
       word_count: linked.split(/\s+/).length,
       generation_cost_usd: Number(totalCost.toFixed(4)),
@@ -780,6 +795,7 @@ Return JSON: { "variants": ["Title 1", "Title 2"] }`,
     // Clear outline cache on success
     clearOutlineCache(kw.id);
 
+    GEN_LANG_DIRECTIVE = ""; // reset so the publish phase isn't forced into es
     return {
       article,
       title: outline.title,
@@ -787,6 +803,7 @@ Return JSON: { "variants": ["Title 1", "Title 2"] }`,
       cost: totalCost,
     };
   } catch (e) {
+    GEN_LANG_DIRECTIVE = ""; // reset language so a failure can't leak into later gpt() calls
     // Duplicate-slug (Postgres 23505): a PRIOR run already created the article
     // for this keyword but died (timeout) before marking the keyword done, so
     // the orphan-unstucker reset it to `queued`. Re-queuing again re-picks the
