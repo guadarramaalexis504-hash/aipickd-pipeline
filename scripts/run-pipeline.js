@@ -1202,8 +1202,11 @@ function formatNumbers(text) {
 }
 
 // --- Affiliate disclosure block (FTC compliance) ---
-function affiliateDisclosure() {
-  return `<!-- wp:html -->\n<div class="aipickd-disclosure" style="background:#f0f7ff;border-left:4px solid #2563eb;padding:12px 16px;margin:0 0 24px;border-radius:4px;font-size:0.875rem;color:#374151;">\n  ⚡ <strong>Disclosure:</strong> This article contains affiliate links. If you purchase through our links, we may earn a commission at no extra cost to you. We only recommend tools we've evaluated and trust.\n</div>\n<!-- /wp:html -->\n\n`;
+function affiliateDisclosure(lang = "en") {
+  const text = lang === "es"
+    ? `⚡ <strong>Aviso:</strong> Este artículo contiene enlaces de afiliado. Si compras a través de nuestros enlaces, podríamos ganar una comisión sin costo extra para ti. Solo recomendamos herramientas que probamos y en las que confiamos.`
+    : `⚡ <strong>Disclosure:</strong> This article contains affiliate links. If you purchase through our links, we may earn a commission at no extra cost to you. We only recommend tools we've evaluated and trust.`;
+  return `<!-- wp:html -->\n<div class="aipickd-disclosure" style="background:#f0f7ff;border-left:4px solid #2563eb;padding:12px 16px;margin:0 0 24px;border-radius:4px;font-size:0.875rem;color:#374151;">\n  ${text}\n</div>\n<!-- /wp:html -->\n\n`;
 }
 
 // --- Generate WP tags from article content via GPT ---
@@ -1448,8 +1451,11 @@ async function publishAllDrafts(maxCount = 10) {
     article.content_markdown = injectToC(article.content_markdown);
 
     try {
-      // Prepend affiliate disclosure (FTC compliance)
-      const disclosure = affiliateDisclosure();
+      const artLang = (article.language || "en").toLowerCase();
+      const isES = artLang === "es";
+
+      // Prepend affiliate disclosure (FTC compliance) — localized per language
+      const disclosure = affiliateDisclosure(artLang);
       let html = disclosure + mdToHtml(article.content_markdown);
 
       // ── Pre-publish HTML validator (defense in depth) ────────────────
@@ -1492,29 +1498,34 @@ async function publishAllDrafts(maxCount = 10) {
         } catch {}
       }
 
-      // Generate WP tags via GPT
-      const tagSlugs = await generateWPTags(
-        article.title,
-        article.primary_keyword || "",
-        article.article_type || "article",
-        article.niche?.slug || ""
-      );
-      // Create/get WP tag IDs
+      // Generate WP tags via GPT. Spanish posts skip WP tags + categories for
+      // now: Polylang taxonomy terms are per-language and the existing terms are
+      // all English, so assigning them to an /es/ post would mismatch. Spanish
+      // taxonomy translations are a later refinement — the post still publishes
+      // to /es/ with full Spanish content, title, meta and image.
+      let tagSlugs = [];
       const tagIds = [];
-      for (const tagName of tagSlugs) {
-        try {
-          // Try to find existing tag first
-          const existingRes = await wp("GET", `tags?search=${encodeURIComponent(tagName)}&per_page=1`);
-          if (Array.isArray(existingRes) && existingRes.length > 0) {
-            tagIds.push(existingRes[0].id);
-          } else {
-            const newTag = await wp("POST", "tags", { name: tagName, slug: tagName.replace(/\s+/g, "-") });
-            if (newTag?.id) tagIds.push(newTag.id);
-          }
-        } catch {}
+      if (!isES) {
+        tagSlugs = await generateWPTags(
+          article.title,
+          article.primary_keyword || "",
+          article.article_type || "article",
+          article.niche?.slug || ""
+        );
+        for (const tagName of tagSlugs) {
+          try {
+            const existingRes = await wp("GET", `tags?search=${encodeURIComponent(tagName)}&per_page=1`);
+            if (Array.isArray(existingRes) && existingRes.length > 0) {
+              tagIds.push(existingRes[0].id);
+            } else {
+              const newTag = await wp("POST", "tags", { name: tagName, slug: tagName.replace(/\s+/g, "-") });
+              if (newTag?.id) tagIds.push(newTag.id);
+            }
+          } catch {}
+        }
       }
 
-      const catId = nicheCatMap[article.niche?.slug];
+      const catId = isES ? null : nicheCatMap[article.niche?.slug];
 
       // Idempotency guard: a deterministic key (slug + UTC day + body hash)
       // prevents republishing the same article when a previous run crashed
@@ -1566,7 +1577,11 @@ async function publishAllDrafts(maxCount = 10) {
         status: WP_STATUS,
         categories: catId ? [catId] : [],
         tags: tagIds,
-        meta: { _yoast_wpseo_metadesc: article.meta_description || "" },
+        // _pipeline_lang is read by the aipickd-lang-bridge mu-plugin to set the
+        // post's Polylang language → Spanish posts land under /es/ with hreflang.
+        // (Dropped the dead _yoast_wpseo_metadesc — no Yoast installed; the
+        // excerpt already feeds the aipickd-seo-meta plugin's meta description.)
+        meta: { _pipeline_lang: artLang },
       });
       if (tagIds.length > 0) console.log(`   🏷️  Tags: ${tagSlugs.slice(0, 5).join(", ")}...`);
       const finalStatus = WP_STATUS === "publish" ? "published" : "pending_review";
