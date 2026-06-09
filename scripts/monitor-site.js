@@ -1,173 +1,288 @@
 #!/usr/bin/env node
 /**
- * AIPickd — Site health monitor (Playwright)
+ * AIPickd site availability monitor.
  *
- * Runs a full browser check on aipickd.com and reports:
- *   - Is site up?
- *   - Load time (Core Web Vitals)
- *   - Any console errors?
- *   - Are key pages rendering properly?
- *
- * Sends alert via Discord/Telegram if problems detected.
- *
- * Schedule:
- *   Use Windows Task Scheduler to run every hour:
- *     node scripts/monitor-site.js
+ * The monitor keeps Playwright rendering checks, but curl is the diagnostic
+ * source of truth for outages because it exposes DNS/connect/TLS/TTFB/IP data.
  *
  * Usage:
- *   node scripts/monitor-site.js            # full check
- *   node scripts/monitor-site.js --alert    # only alert on errors (silent if OK)
+ *   node scripts/monitor-site.js
+ *   node scripts/monitor-site.js --alert
  */
 
-const { notify, notifyUptimeDown, notifyUptimeRestored, notifyAlert } = require("./notify.js");
+const { notifyAlert, notifyUptimeDown, notifyUptimeRestored } = require("./notify.js");
+const {
+  DEFAULT_CHECKS,
+  DEFAULT_USER_AGENTS,
+  PLAYWRIGHT_USER_AGENT,
+  buildAlertMessage,
+  classifyIncident,
+  diagnoseDnsForChecks,
+  formatDiagnosticLine,
+  formatProbeConsole,
+  runProbeMatrix,
+  summarizeUrlResults,
+} = require("./lib/availability-monitor");
 const { loadEnv } = require("./lib/env");
 const { warmUp } = require("./lib/warmup");
 
 const env = loadEnv();
-
 const ALERT_ONLY = process.argv.includes("--alert");
 
-(async () => {
+async function checkWithPlaywright(checks) {
   let playwright;
   try {
     playwright = require("playwright");
-  } catch {
-    console.error("❌ Playwright not installed. Run: npm install playwright && npx playwright install chromium");
-    process.exit(1);
+  } catch (error) {
+    return {
+      ok: false,
+      issues: [`Playwright unavailable: ${error.message}`],
+      consoleErrors: [],
+      results: [],
+    };
   }
 
   const browser = await playwright.chromium.launch({ headless: true });
-  const context = await browser.newContext({
-    userAgent: "AIPickd Health Monitor (Playwright) - admin health check",
-  });
+  const context = await browser.newContext({ userAgent: PLAYWRIGHT_USER_AGENT });
   const page = await context.newPage();
-
   const issues = [];
   const consoleErrors = [];
-  page.on("pageerror", (e) => consoleErrors.push(e.message));
+  const results = [];
+
+  page.on("pageerror", (error) => consoleErrors.push(error.message));
   page.on("console", (msg) => {
     if (msg.type() === "error") consoleErrors.push(msg.text());
   });
 
-  const start = Date.now();
-  const urlsToCheck = [
-    { name: "Homepage", url: "https://aipickd.com/" },
-    { name: "About", url: "https://aipickd.com/about/" },
-    { name: "Sample article", url: "https://aipickd.com/jasper-vs-copy-vs-writesonic/" },
-    { name: "Sitemap", url: "https://aipickd.com/wp-sitemap.xml" },
-  ];
+  try {
+    for (const check of checks.filter((item) => item.kind !== "json")) {
+      const start = Date.now();
+      try {
+        let status;
+        let contentLength;
+        let title = "";
 
-  const results = [];
+        if (check.kind === "xml") {
+          const response = await page.request.get(check.url, { timeout: 30000 });
+          status = response.status();
+          contentLength = (await response.text()).length;
+        } else {
+          const response = await page.goto(check.url, {
+            waitUntil: "domcontentloaded",
+            timeout: 30000,
+          });
+          status = response?.status() || 0;
+          title = await page.title().catch(() => "");
+          contentLength = await page.evaluate(() => document.body?.innerHTML?.length || 0);
+        }
 
-  // Warm up Hostinger before checking — absorbs the cold-start that would
-  // otherwise show up as a false "site down" on the very first request.
-  await warmUp({ log: true }).catch(() => {});
-
-  // One attempt at a single URL → returns a result object (throws on nav error).
-  async function checkOnce(check) {
-    const t0 = Date.now();
-    const isXml = check.url.endsWith(".xml");
-    let status, contentLength, title;
-    if (isXml) {
-      // Use raw HTTP request — page.goto on XML returns body length 0 in headless
-      const r = await page.request.get(check.url, { timeout: 30000 });
-      status = r.status();
-      contentLength = (await r.text()).length;
-      title = "";
-    } else {
-      const response = await page.goto(check.url, { waitUntil: "domcontentloaded", timeout: 30000 });
-      status = response.status();
-      title = await page.title().catch(() => "");
-      contentLength = await page.evaluate(() => document.body?.innerHTML?.length || 0);
+        const loadMs = Date.now() - start;
+        const minOk = check.kind === "xml" ? 100 : 1000;
+        const ok = status >= 200 && status < 400 && contentLength > minOk;
+        const result = {
+          name: check.name,
+          url: check.url,
+          status,
+          loadMs,
+          bodyLength: contentLength,
+          title: title.slice(0, 60),
+          ok,
+        };
+        results.push(result);
+        if (!ok) issues.push(`${check.name}: HTTP ${status} content=${contentLength} bytes`);
+      } catch (error) {
+        const message = error.message.split("\n")[0].slice(0, 160);
+        issues.push(`${check.name}: ${message}`);
+        results.push({
+          name: check.name,
+          url: check.url,
+          status: 0,
+          loadMs: Date.now() - start,
+          bodyLength: 0,
+          ok: false,
+          error: message,
+        });
+      }
     }
-    const loadMs = Date.now() - t0;
-    const minOk = isXml ? 100 : 1000;
+  } finally {
+    await browser.close().catch(() => {});
+  }
+
+  return {
+    ok: issues.length === 0,
+    issues,
+    consoleErrors,
+    results,
+  };
+}
+
+async function readPublishedArticleCount() {
+  if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
     return {
-      name: check.name, url: check.url, status, loadMs, isXml,
-      title: title.slice(0, 60), bodyLength: contentLength,
-      ok: status >= 200 && status < 400 && contentLength > minOk,
+      ok: true,
+      skipped: true,
+      message: "Supabase article count skipped: env not configured",
     };
   }
 
-  // 2-STRIKES: a single cold-start timeout on shared hosting is NOT an outage.
-  // Only record an issue if a URL fails TWICE, with a re-warm in between. This
-  // is what kills the "site down" false alarms that were spamming #alertas.
-  for (const check of urlsToCheck) {
-    let result = null, errMsg = null;
-    for (let strike = 1; strike <= 2; strike++) {
-      try {
-        result = await checkOnce(check);
-        if (result.ok) break; // success — no second strike needed
-        errMsg = `HTTP ${result.status} (content ${result.bodyLength} bytes)`;
-      } catch (e) {
-        result = null;
-        errMsg = e.message.split("\n")[0].slice(0, 100);
-      }
-      if (strike === 1) {
-        await warmUp({ attempts: 2 }).catch(() => {}); // re-wake before retry
-        await new Promise((r) => setTimeout(r, 2000));
-      }
+  const response = await fetch(
+    `${env.SUPABASE_URL}/rest/v1/articles?status=eq.published&select=id`,
+    {
+      headers: {
+        apikey: env.SUPABASE_SERVICE_ROLE_KEY,
+        Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+        Prefer: "count=exact",
+      },
+      signal: AbortSignal.timeout(15000),
     }
+  );
+  const range = response.headers.get("content-range") || "";
+  const total = Number(range.split("/")[1]) || 0;
+  if (total < 10) return { ok: false, message: `Low published count: ${total}`, total };
+  return { ok: true, total };
+}
 
-    if (result && result.ok) {
-      results.push(result);
-      if (!result.isXml && result.loadMs > 5000) {
-        issues.push(`${check.name}: slow (${result.loadMs}ms) - consider Cloudflare`);
-      }
-      console.log(`  ✅ ${check.name.padEnd(20)} ${result.status} ${result.loadMs}ms ${(result.bodyLength / 1024).toFixed(0)}KB`);
-    } else {
-      if (result) results.push(result);
-      issues.push(`${check.name}: ${errMsg} (failed 2×)`);
-      console.log(`  ❌ ${check.name}: ${errMsg} (failed 2×)`);
+function firstFailedDiagnostic(urlSummaries) {
+  for (const summary of urlSummaries) {
+    const result = (summary.finalResults || []).find((item) => !item.ok);
+    if (result) return result;
+  }
+  return null;
+}
+
+function logProbeDetails(urlSummaries) {
+  for (const summary of urlSummaries) {
+    console.log(`  ${formatProbeConsole(summary)}`);
+    for (const result of summary.finalResults || []) {
+      console.log(`    ${formatDiagnosticLine(result)}`);
     }
   }
+}
 
-  // Post count check via Supabase (more reliable than WP REST which needs auth)
+(async () => {
+  const start = Date.now();
+
+  console.log("AIPickd availability monitor");
+  console.log(`Checks: ${DEFAULT_CHECKS.map((check) => check.name).join(", ")}`);
+  console.log(`User-Agents: ${DEFAULT_USER_AGENTS.map((ua) => ua.name).join(", ")}`);
+
+  await warmUp({ log: true }).catch(() => {});
+
+  const dnsDiagnostics = await diagnoseDnsForChecks(DEFAULT_CHECKS).catch((error) => [
+    {
+      hostname: "aipickd.com",
+      system: { resolver: "system", ok: false, error: error.message },
+      cloudflare: { resolver: "1.1.1.1", ok: false, error: "not checked" },
+    },
+  ]);
+
+  const probeResults = await runProbeMatrix({
+    checks: DEFAULT_CHECKS,
+    userAgents: DEFAULT_USER_AGENTS,
+    maxAttempts: 2,
+    backoffMs: [2000],
+    onRetry: async () => {
+      await warmUp({ attempts: 2 }).catch(() => {});
+    },
+    log: (message) => console.log(message),
+  });
+  const urlSummaries = summarizeUrlResults({ checks: DEFAULT_CHECKS, probeResults });
+
+  console.log("\nHTTP diagnostics:");
+  logProbeDetails(urlSummaries);
+
+  console.log("\nPlaywright render check:");
+  const playwrightResult = await checkWithPlaywright(DEFAULT_CHECKS);
+  for (const result of playwrightResult.results) {
+    const marker = result.ok ? "OK" : "FAIL";
+    console.log(
+      `  ${marker} ${result.name} code=${result.status} total=${result.loadMs}ms body=${result.bodyLength}`
+    );
+  }
+  if (playwrightResult.issues.length > 0) {
+    playwrightResult.issues.forEach((issue) => console.log(`  issue: ${issue}`));
+  }
+  if (playwrightResult.consoleErrors.length > 0) {
+    console.log("  console errors:");
+    playwrightResult.consoleErrors
+      .slice(0, 5)
+      .forEach((error) => console.log(`    - ${error.slice(0, 120)}`));
+  }
+
+  const contentIssues = [];
   try {
-    const supaRes = await fetch(`${env.SUPABASE_URL}/rest/v1/articles?status=eq.published&select=id`, {
-      headers: { apikey: env.SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`, Prefer: "count=exact" },
-    });
-    const range = supaRes.headers.get("content-range") || "";
-    const total = range.split("/")[1];
-    console.log(`  📝 Published articles (Supabase): ${total}`);
-    if (parseInt(total) < 10) issues.push(`Low published count: ${total}`);
-  } catch (e) {
-    issues.push(`Cannot read article count: ${e.message.slice(0, 60)}`);
+    const articleCount = await readPublishedArticleCount();
+    if (articleCount.skipped) {
+      console.log(`\nContent check: ${articleCount.message}`);
+    } else {
+      console.log(`\nContent check: published articles=${articleCount.total}`);
+      if (!articleCount.ok) contentIssues.push(articleCount.message);
+    }
+  } catch (error) {
+    contentIssues.push(`Cannot read article count: ${error.message.slice(0, 100)}`);
+    console.log(`\nContent check issue: ${contentIssues[contentIssues.length - 1]}`);
   }
 
-  await browser.close();
-
+  const classification = classifyIncident({
+    urlSummaries,
+    dnsDiagnostics,
+    playwrightResult,
+  });
   const totalMs = Date.now() - start;
-  console.log(`\n⏱️  Total check time: ${totalMs}ms`);
 
-  if (consoleErrors.length > 0) {
-    console.log(`\n⚠️  Console errors detected:`);
-    consoleErrors.slice(0, 5).forEach((e) => console.log(`    - ${e.slice(0, 120)}`));
-  }
+  console.log(`\nTotal check time: ${totalMs}ms`);
+  console.log(`Severity: ${classification.severity}`);
+  classification.diagnoses.forEach((diagnosis) => console.log(`  - ${diagnosis.text}`));
 
-  if (issues.length > 0) {
-    console.log(`\n🚨 ${issues.length} ISSUE(S) DETECTED:`);
-    issues.forEach((i) => console.log(`    - ${i}`));
+  const hasAvailabilityIssue = classification.severity !== "ok";
+  const hasContentIssue = contentIssues.length > 0;
 
-    // Alert via notifications — route to #alertas channel
-    const isSiteDown = issues.some(i => /HTTP 5|ERR_|timeout|failed 2×/i.test(i));
-    if (isSiteDown) {
-      const firstResult = results.find(r => !r.ok);
-      const statusCode = firstResult?.status || null;
-      const responseMs = firstResult?.loadMs || null;
-      await notifyUptimeDown(statusCode, responseMs).catch(() => {});
+  if (hasAvailabilityIssue || hasContentIssue) {
+    const severity = classification.severity === "ok" ? "warning" : classification.severity;
+    let alertMessage = buildAlertMessage({
+      classification:
+        classification.severity === "ok"
+          ? {
+              ...classification,
+              severity,
+              diagnoses: [
+                ...classification.diagnoses,
+                { code: "content_issue", text: "Content count check reported an issue." },
+              ],
+            }
+          : classification,
+      urlSummaries,
+      dnsDiagnostics,
+      playwrightResult,
+      totalMs,
+    });
+    if (contentIssues.length > 0) {
+      alertMessage += `\n\nContent issues:\n${contentIssues.map((issue) => `- ${issue}`).join("\n")}`;
     }
-    const alertMsg = `**${issues.length} problema(s) detectado(s) en aipickd.com**\n\n${issues.map(i => `• ${i}`).join("\n")}\n\n🔗 https://aipickd.com/`;
-    const r = await notifyAlert(alertMsg, isSiteDown ? "critical" : "high").catch(() => ({ ok: false }));
-    console.log(`\n📨 Alert sent to #alertas: ${r.ok ? "✅" : "❌"}`);
 
+    if (severity === "critical") {
+      const firstFailed = firstFailedDiagnostic(urlSummaries);
+      await notifyUptimeDown(
+        firstFailed?.statusCode || null,
+        firstFailed?.timings?.totalMs || null
+      ).catch(() => {});
+    }
+    const result = await notifyAlert(alertMessage, severity).catch(() => ({ ok: false }));
+    console.log(`\nAlert sent to #alertas (${severity}): ${result.ok ? "yes" : "no"}`);
     process.exit(1);
-  } else {
-    console.log(`\n✅ All checks passed. Site is healthy.`);
-    if (!ALERT_ONLY) {
-      // Optional "all good" ping to #alertas
-      const avgMs = Math.round(totalMs / results.length);
-      await notifyUptimeRestored(avgMs).catch(() => {});
-    }
   }
-})().catch((e) => { console.error("❌ FATAL:", e.message); process.exit(1); });
+
+  console.log("\nAll availability checks passed.");
+  if (!ALERT_ONLY) {
+    const avgMs = Math.round(
+      urlSummaries
+        .flatMap((summary) => summary.finalResults || [])
+        .reduce((sum, result) => sum + (result.timings?.totalMs || 0), 0) /
+        Math.max(1, urlSummaries.flatMap((summary) => summary.finalResults || []).length)
+    );
+    await notifyUptimeRestored(avgMs).catch(() => {});
+  }
+})().catch((error) => {
+  console.error("FATAL:", error.message);
+  process.exit(1);
+});
