@@ -2,11 +2,12 @@
 "use strict";
 
 const { hasWriteFlag, readIntFlag } = require("./lib/cli-safety");
-const { supa, wp } = require("./lib/clients");
+const { supa, WP_USER_AGENT } = require("./lib/clients");
 
 const argv = process.argv.slice(2);
 const GO = hasWriteFlag(argv, new Set(["--go"]));
 const LIMIT = readIntFlag(argv, "--limit", 100);
+const WP_HOST = "https://aipickd.com";
 
 function slugFromLink(link) {
   try {
@@ -17,13 +18,27 @@ function slugFromLink(link) {
   }
 }
 
+async function wpPublic(endpoint) {
+  const res = await fetch(`${WP_HOST}/wp-json/wp/v2/${endpoint}`, {
+    headers: {
+      Accept: "application/json",
+      "User-Agent": WP_USER_AGENT,
+    },
+    signal: AbortSignal.timeout(30_000),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(`WP public GET ${endpoint}: ${res.status} ${text.slice(0, 300)}`);
+  }
+  return text ? JSON.parse(text) : null;
+}
+
 async function fetchWpPosts(limit) {
   const posts = [];
   let page = 1;
   while (posts.length < limit) {
-    const batch = await wp(
-      "GET",
-      `posts?per_page=${Math.min(100, limit - posts.length)}&page=${page}&status=publish,draft,private&_fields=id,slug,link,status,meta`
+    const batch = await wpPublic(
+      `posts?per_page=${Math.min(100, limit - posts.length)}&page=${page}&status=publish&_fields=id,slug,link,status,meta`
     ).catch((err) => {
       if (/rest_post_invalid_page_number/.test(err.message)) return [];
       throw err;
@@ -97,8 +112,12 @@ async function main() {
 }
 
 if (require.main === module) {
-  main().then((code) => process.exit(code)).catch((err) => {
-    console.error(`ERROR: ${err.message}`);
-    process.exit(1);
-  });
+  main()
+    .then((code) => {
+      process.exitCode = code;
+    })
+    .catch((err) => {
+      console.error(`ERROR: ${err.message}`);
+      process.exitCode = 1;
+    });
 }

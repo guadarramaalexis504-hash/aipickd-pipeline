@@ -2,10 +2,11 @@
 "use strict";
 
 const { hasWriteFlag } = require("./lib/cli-safety");
-const { wp } = require("./lib/clients");
+const { wp, WP_USER_AGENT } = require("./lib/clients");
 
 const argv = process.argv.slice(2);
 const GO = hasWriteFlag(argv, new Set(["--go"]));
+const WP_HOST = "https://aipickd.com";
 
 function postLooksSpanish(post) {
   const link = post.link || "";
@@ -18,11 +19,23 @@ function postLooksSpanish(post) {
   );
 }
 
+async function wpPublic(endpoint) {
+  const res = await fetch(`${WP_HOST}/wp-json/wp/v2/${endpoint}`, {
+    headers: {
+      Accept: "application/json",
+      "User-Agent": WP_USER_AGENT,
+    },
+    signal: AbortSignal.timeout(30_000),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(`WP public GET ${endpoint}: ${res.status} ${text.slice(0, 300)}`);
+  }
+  return text ? JSON.parse(text) : null;
+}
+
 async function readOnlyProbe() {
-  const posts = await wp(
-    "GET",
-    "posts?per_page=20&status=publish,draft,private&_fields=id,slug,link,meta,lang,pll_language"
-  );
+  const posts = await wpPublic("posts?per_page=20&status=publish&_fields=id,slug,link,meta,lang,pll_language");
   const candidates = (Array.isArray(posts) ? posts : []).filter((post) => {
     const meta = post.meta || {};
     return meta._pipeline_lang === "es" || post.lang === "es" || post.pll_language === "es" || (post.link || "").includes("/es/");
@@ -78,8 +91,12 @@ async function main() {
 }
 
 if (require.main === module) {
-  main().then((code) => process.exit(code)).catch((err) => {
-    console.error(`ERROR: ${err.message}`);
-    process.exit(1);
-  });
+  main()
+    .then((code) => {
+      process.exitCode = code;
+    })
+    .catch((err) => {
+      console.error(`ERROR: ${err.message}`);
+      process.exitCode = 1;
+    });
 }

@@ -38,12 +38,13 @@ const {
 const args = process.argv.slice(2);
 const LIMIT = parseInt(args[args.indexOf("--limit") + 1]) || 5;
 const DRY_RUN = !hasWriteFlag(args, new Set(["--go"]));
+const HAS_WP_AUTH = Boolean(WP_USERNAME && WP_ADMIN_PASSWORD);
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
   console.error("❌ Missing SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY");
   process.exit(2);
 }
-if (!WP_USERNAME || !WP_ADMIN_PASSWORD) {
+if (!DRY_RUN && !HAS_WP_AUTH) {
   console.error("❌ Missing WP_USERNAME / WP_ADMIN_PASSWORD");
   process.exit(2);
 }
@@ -54,7 +55,7 @@ const SUPA_HEADERS = {
   "Content-Type": "application/json",
   Prefer: "return=representation",
 };
-const WP_AUTH = "Basic " + Buffer.from(`${WP_USERNAME}:${WP_ADMIN_PASSWORD}`).toString("base64");
+const WP_AUTH = HAS_WP_AUTH ? "Basic " + Buffer.from(`${WP_USERNAME}:${WP_ADMIN_PASSWORD}`).toString("base64") : null;
 const UA = "Mozilla/5.0 (compatible; AIPickd-PublishManual/1.0)";
 
 function ts() {
@@ -73,6 +74,9 @@ async function supaPatch(path, body) {
   return r.json();
 }
 async function wpReq(method, endpoint, body) {
+  if (!HAS_WP_AUTH) {
+    throw new Error("WP auth missing; unavailable in report-only mode without WP_USERNAME / WP_ADMIN_PASSWORD");
+  }
   const r = await fetch(`https://aipickd.com/wp-json/wp/v2/${endpoint}`, {
     method,
     headers: {
@@ -170,20 +174,25 @@ function mdToHtml(md) {
   console.log(`${ts()} ▶ publish-pending-drafts (limit=${LIMIT}, mode=${DRY_RUN ? "REPORT ONLY" : "WRITE --go"})`);
 
   // 1. Pre-flight: confirm WP auth works BEFORE we touch any drafts.
-  console.log(`${ts()} pre-flight: WP auth check…`);
-  try {
-    await wpReq("GET", "users/me?context=edit");
-    console.log(`${ts()} ✅ WP auth OK`);
-  } catch (e) {
-    console.error(`${ts()} ❌ WP auth FAILED: ${e.message}`);
-    notifyAlert(
-      `🚨 **publish-pending-drafts pre-flight failed**\n` +
-      `WP auth returned ${e.status || "?"}.\n` +
-      `Action: regenerate the Application Password at \`/wp-admin/profile.php\` and update \`WP_ADMIN_PASSWORD\` in GitHub Secrets.\n` +
-      `Error: \`${e.message?.slice(0, 200)}\``,
-      "critical"
-    ).catch(() => {});
-    process.exit(3);
+  if (HAS_WP_AUTH) {
+    console.log(`${ts()} pre-flight: WP auth check…`);
+    try {
+      await wpReq("GET", "users/me?context=edit");
+      console.log(`${ts()} ✅ WP auth OK`);
+    } catch (e) {
+      console.error(`${ts()} ❌ WP auth FAILED: ${e.message}`);
+      notifyAlert(
+        `🚨 **publish-pending-drafts pre-flight failed**\n` +
+        `WP auth returned ${e.status || "?"}.\n` +
+        `Action: regenerate the Application Password at \`/wp-admin/profile.php\` and update \`WP_ADMIN_PASSWORD\` in GitHub Secrets.\n` +
+        `Error: \`${e.message?.slice(0, 200)}\``,
+        "critical"
+      ).catch(() => {});
+      process.exitCode = 3;
+      return;
+    }
+  } else {
+    console.log(`${ts()} pre-flight: WP auth check skipped (missing credentials; report-only, no writes)`);
   }
 
   // 2. Fetch pending drafts (raw, no JOIN — keeps the query simple).
@@ -200,7 +209,7 @@ function mdToHtml(md) {
   const nicheBySlug = Object.fromEntries((niches || []).map((n) => [n.id, n.slug]));
 
   // 4. WP categories
-  const cats = await wpReq("GET", "categories?per_page=20&_fields=id,slug");
+  const cats = HAS_WP_AUTH ? await wpReq("GET", "categories?per_page=20&_fields=id,slug") : [];
   const catMap = Object.fromEntries((cats || []).map((c) => [c.slug, c.id]));
   const nicheCatMap = {
     "ai-writing": catMap["ai-writing"],
@@ -237,6 +246,7 @@ function mdToHtml(md) {
           language: plan.language,
           planned_wp_meta: plan.wpMeta,
           planned_category: catId || null,
+          wp_auth: HAS_WP_AUTH ? "available" : "missing_not_required_report_only",
           idempotency_key: plan.idempotencyKey,
           qa: {
             pass: plan.qa.pass,
@@ -399,5 +409,5 @@ function mdToHtml(md) {
   }
 })().catch((e) => {
   console.error("\n❌ FATAL:", e.message);
-  process.exit(1);
+  process.exitCode = 1;
 });

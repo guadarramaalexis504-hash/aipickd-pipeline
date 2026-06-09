@@ -73,8 +73,12 @@ async function main() {
 }
 
 if (require.main === module) {
-  main().then((code) => process.exit(code)).catch((err) => {
-    console.error(`ERROR: ${err.message}`);
-    process.exit(err.code === "ENV_MISSING" ? 2 : 1);
-  });
+  main()
+    .then((code) => {
+      process.exitCode = code;
+    })
+    .catch((err) => {
+      console.error(`ERROR: ${err.message}`);
+      process.exitCode = err.code === "ENV_MISSING" ? 2 : 1;
+    });
 }
