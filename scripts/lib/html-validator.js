@@ -36,7 +36,9 @@ function validateRenderedHtml(html, title = "") {
   //    one; if any survive, it's a bug.)
   const h1Matches = html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/gi) || [];
   if (h1Matches.length > 0) {
-    issues.push(`${h1Matches.length} <h1> tag(s) in body (WP renders title's H1 separately — body should have zero)`);
+    issues.push(
+      `${h1Matches.length} <h1> tag(s) in body (WP renders title's H1 separately — body should have zero)`
+    );
   }
 
   // 3. Empty paragraphs — the mdToHtml block-splitter sometimes emits

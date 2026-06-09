@@ -50,7 +50,7 @@ test("detects bad href attributes", () => {
 });
 
 test("detects title duplicated as H2 mid-body", () => {
-  const html = '<p>intro</p><h2>Best AI Tools 2026</h2><p>body</p>';
+  const html = "<p>intro</p><h2>Best AI Tools 2026</h2><p>body</p>";
   const issues = validateRenderedHtml(html, "Best AI Tools 2026");
   assert.ok(issues.some((i) => i.includes("duplicated")));
 });
@@ -62,9 +62,6 @@ test("empty HTML reports as empty", () => {
 
 test("handles title with regex special chars", () => {
   // Should not throw even when title has $, *, etc.
-  const issues = validateRenderedHtml(
-    "<p>intro</p><h2>Foo $ Bar</h2>",
-    "Foo $ Bar"
-  );
+  const issues = validateRenderedHtml("<p>intro</p><h2>Foo $ Bar</h2>", "Foo $ Bar");
   assert.ok(Array.isArray(issues));
 });
