@@ -25,7 +25,12 @@ const { supa } = require('./lib/clients');
 
 const env = loadEnv();
 const args   = process.argv.slice(2);
-const DRY_RUN = args.includes('--dry-run');
+const DRY_RUN = !(
+  args.includes("--go") ||
+  args.includes("--fix") ||
+  args.includes("--apply") ||
+  args.includes("--confirm")
+);
 const DAYS    = parseInt(args[args.indexOf('--days') + 1]) || 5;
 
 (async () => {

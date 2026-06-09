@@ -19,6 +19,7 @@ dashboard.html
 tmp/
 dist/
 .outline-cache/
+supabase/.temp/
 RESUMEN-*.md
 backup/
 
