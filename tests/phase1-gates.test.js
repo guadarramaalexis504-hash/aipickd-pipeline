@@ -9,6 +9,11 @@ const {
 } = require("../scripts/lib/internal-linking");
 const { filterPipelineKeywords, keywordStateForArticle } = require("../scripts/lib/spanish-gate");
 const { buildRecoveryPublishPlan } = require("../scripts/lib/recovery-publisher");
+const {
+  cleanupAiTellPhrases,
+  detectAiTellPhrases,
+  qualityGate,
+} = require("../scripts/lib/quality");
 
 test("cli safety: mutating scripts are dry/report-only unless an explicit write flag is present", () => {
   assert.equal(hasWriteFlag([]), false);
@@ -125,4 +130,35 @@ test("internal links are same-language by default and do not use nofollow", () =
   const block = buildRelatedBlock(related, { language: "es" });
   assert.match(block, /Articulos relacionados/);
   assert.doesNotMatch(block, /nofollow/i);
+});
+
+test("AI-tell cleanup removes common phrases and QA blocks any leftovers clearly", () => {
+  const articleBody = [
+    "# Top 10 AI-Powered Blog Writing Tools Ranked for 2026",
+    "",
+    "In today's digital landscape, teams want a game-changer that can unlock better drafts.",
+    "This cutting-edge workflow can feel seamless, but a robust solution still needs editing.",
+    "Let's dive in and delve into how to harness the power of each powerful tool.",
+    "The goal is not to revolutionize your process or elevate every paragraph overnight.",
+    "",
+    "## FAQ",
+    "### What should buyers check first?",
+    "Start with output quality, pricing, and editorial controls.",
+  ].join("\n");
+
+  const detected = detectAiTellPhrases(articleBody);
+  assert.ok(detected.length >= 7, `expected 7+ AI-tells, got ${detected.length}`);
+
+  const cleaned = cleanupAiTellPhrases(articleBody);
+  assert.equal(detectAiTellPhrases(cleaned.text).length, 0);
+
+  const qa = qualityGate({
+    content_markdown: articleBody,
+    language: "en",
+    word_count: 1200,
+  });
+  const aiTellIssue = qa.issues.find((issue) => issue.code === "ai_tells");
+  assert.ok(aiTellIssue, "QA should block uncleaned AI-tell clusters");
+  assert.match(aiTellIssue.message, /AI-tell phrases/);
+  assert.equal(aiTellIssue.repairable, true);
 });

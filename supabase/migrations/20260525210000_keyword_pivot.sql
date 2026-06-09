@@ -136,7 +136,7 @@ DECLARE
 BEGIN
   SELECT COUNT(*) INTO inserted_count
     FROM keywords
-    WHERE priority = 9 AND status = 'queued' AND created_at >= NOW() - INTERVAL '1 minute';
+    WHERE priority = 9 AND status = 'queued';
   SELECT COUNT(*) INTO demoted_count
     FROM keywords
     WHERE priority = 1 AND status = 'queued';

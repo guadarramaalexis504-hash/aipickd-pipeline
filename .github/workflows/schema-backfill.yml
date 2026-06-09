@@ -67,11 +67,11 @@ jobs:
           LIMIT: ${{ github.event.inputs.limit }}
           DRY_RUN: ${{ github.event.inputs.dry_run || 'true' }}
         run: |
-          ARGS=""
-          if [ "$DRY_RUN" = "true" ]; then ARGS="$ARGS --dry-run"; fi
-          if [ -n "$LIMIT" ]; then ARGS="$ARGS --limit $LIMIT"; fi
-          echo "Running: node scripts/categorize-posts.js $ARGS"
-          node scripts/categorize-posts.js $ARGS
+          ARGS=()
+          if [ "$DRY_RUN" = "true" ]; then ARGS+=(--dry-run); fi
+          if [ -n "$LIMIT" ]; then ARGS+=(--limit "$LIMIT"); fi
+          echo "Running: node scripts/categorize-posts.js ${ARGS[*]}"
+          node scripts/categorize-posts.js "${ARGS[@]}"
 
       - name: Run schema backfill
         continue-on-error: true
@@ -80,12 +80,12 @@ jobs:
           LIMIT: ${{ github.event.inputs.limit }}
           DRY_RUN: ${{ github.event.inputs.dry_run || 'true' }}
         run: |
-          ARGS=""
-          if [ "$MODE" = "upgrade" ]; then ARGS="$ARGS --upgrade"; fi
-          if [ "$DRY_RUN" = "true" ]; then ARGS="$ARGS --dry-run"; fi
-          if [ -n "$LIMIT" ]; then ARGS="$ARGS --limit $LIMIT"; fi
-          echo "Running: node scripts/add-schema-markup.js $ARGS"
-          node scripts/add-schema-markup.js $ARGS
+          ARGS=()
+          if [ "$MODE" = "upgrade" ]; then ARGS+=(--upgrade); fi
+          if [ "$DRY_RUN" = "true" ]; then ARGS+=(--dry-run); fi
+          if [ -n "$LIMIT" ]; then ARGS+=(--limit "$LIMIT"); fi
+          echo "Running: node scripts/add-schema-markup.js ${ARGS[*]}"
+          node scripts/add-schema-markup.js "${ARGS[@]}"
 
       - name: Ping sitemap after schema changes
         if: ${{ github.event.inputs.dry_run != 'true' }}

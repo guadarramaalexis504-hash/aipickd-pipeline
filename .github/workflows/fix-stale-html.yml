@@ -61,12 +61,12 @@ jobs:
           SLUG: ${{ github.event.inputs.slug || '' }}
           DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
         run: |
-          ARGS=""
-          if [ "$DRY_RUN" != "true" ]; then ARGS="--go"; fi
-          if [ -n "$SLUG" ]; then ARGS="$ARGS --slug $SLUG"; fi
-          if [ -z "$SLUG" ]; then ARGS="$ARGS --hours $HOURS"; fi
-          echo "Running: node scripts/fix-stale-html.js $ARGS"
-          node scripts/fix-stale-html.js $ARGS
+          ARGS=()
+          if [ "$DRY_RUN" != "true" ]; then ARGS+=(--go); fi
+          if [ -n "$SLUG" ]; then ARGS+=(--slug "$SLUG"); fi
+          if [ -z "$SLUG" ]; then ARGS+=(--hours "$HOURS"); fi
+          echo "Running: node scripts/fix-stale-html.js ${ARGS[*]}"
+          node scripts/fix-stale-html.js "${ARGS[@]}"
 
       - name: Notify Discord — fix completed
         if: success()

@@ -52,8 +52,8 @@ jobs:
           LIMIT: ${{ github.event.inputs.limit || '12' }}
           DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
         run: |
-          DRY_FLAG=""
+          ARGS=(--limit "$LIMIT")
           if [ "$DRY_RUN" = "true" ]; then
-            DRY_FLAG="--dry-run"
+            ARGS+=(--dry-run)
           fi
-          node scripts/refresh-titles.js --limit $LIMIT $DRY_FLAG
+          node scripts/refresh-titles.js "${ARGS[@]}"

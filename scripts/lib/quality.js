@@ -2,6 +2,97 @@
 
 const { normalizeLanguage } = require("./spanish-gate");
 
+const AI_TELL_PHRASES = [
+  "game-changer",
+  "cutting-edge",
+  "seamless",
+  "unlock",
+  "elevate",
+  "revolutionize",
+  "in today's digital landscape",
+  "in today's fast-paced world",
+  "harness the power",
+  "delve into",
+  "let's dive in",
+  "robust solution",
+  "powerful tool",
+];
+
+const AI_TELL_PATTERNS = [
+  { phrase: "game-changer", re: /\bgame[- ]changer\b/gi, replacement: "meaningful advantage" },
+  { phrase: "cutting-edge", re: /\bcutting[- ]edge\b/gi, replacement: "current" },
+  { phrase: "seamless", re: /\bseamless(?:ly)?\b/gi, replacement: "smooth" },
+  { phrase: "unlock", re: /\bunlock(?:s|ed|ing)?\b/gi, replacement: "get" },
+  { phrase: "elevate", re: /\belevat(?:e|es|ed|ing)\b/gi, replacement: "improve" },
+  { phrase: "revolutionize", re: /\brevolutioniz(?:e|es|ed|ing)\b/gi, replacement: "change" },
+  {
+    phrase: "in today's digital landscape",
+    re: /\bin today's digital landscape\b/gi,
+    replacement: "for current online work",
+  },
+  {
+    phrase: "in today's fast-paced world",
+    re: /\bin today's fast-paced world\b/gi,
+    replacement: "for busy teams",
+  },
+  { phrase: "harness the power", re: /\bharness the power\b/gi, replacement: "use" },
+  { phrase: "delve into", re: /\bdelve into\b/gi, replacement: "look at" },
+  { phrase: "let's dive in", re: /\blet'?s dive in\b/gi, replacement: "here is the breakdown" },
+  { phrase: "robust solution", re: /\brobust solution\b/gi, replacement: "solid option" },
+  { phrase: "powerful tool", re: /\bpowerful tool\b/gi, replacement: "useful tool" },
+  { phrase: "it's important to note", re: /\bit'?s important to note\b/gi, replacement: "" },
+  { phrase: "it's worth noting", re: /\bit'?s worth noting\b/gi, replacement: "" },
+  { phrase: "when it comes to", re: /\bwhen it comes to\b/gi, replacement: "for" },
+  { phrase: "whether you're", re: /\bwhether you'?re\b/gi, replacement: "if you are" },
+  { phrase: "in the realm of", re: /\bin the realm of\b/gi, replacement: "in" },
+  { phrase: "in the world of", re: /\bin the world of\b/gi, replacement: "in" },
+  { phrase: "let's explore", re: /\blet'?s explore\b/gi, replacement: "here is" },
+  { phrase: "let's take a look", re: /\blet'?s take a look\b/gi, replacement: "here is" },
+  { phrase: "supercharge", re: /\bsupercharge(?:s|d|ing)?\b/gi, replacement: "improve" },
+];
+
+function uniqueMatches(matches) {
+  return Array.from(new Set(matches.map((match) => match.phrase))).map((phrase) => ({
+    phrase,
+    count: matches.filter((match) => match.phrase === phrase).length,
+  }));
+}
+
+function detectAiTellPhrases(markdown = "") {
+  const text = String(markdown || "");
+  const matches = [];
+  for (const pattern of AI_TELL_PATTERNS) {
+    const found = text.match(pattern.re);
+    if (!found) continue;
+    for (const value of found) {
+      matches.push({ phrase: pattern.phrase, value });
+    }
+  }
+  return matches;
+}
+
+function cleanupAiTellPhrases(markdown = "") {
+  let text = String(markdown || "");
+  const before = detectAiTellPhrases(text);
+  for (const pattern of AI_TELL_PATTERNS) {
+    text = text.replace(pattern.re, pattern.replacement);
+  }
+  const after = detectAiTellPhrases(text);
+  return {
+    text,
+    before,
+    removed: uniqueMatches(before),
+    remaining: uniqueMatches(after),
+    changed: text !== String(markdown || ""),
+  };
+}
+
+function formatAiTellIssue(markdown = "") {
+  const matches = detectAiTellPhrases(markdown);
+  if (matches.length === 0) return null;
+  return `${matches.length} AI-tell phrases (polish step didn't scrub)`;
+}
+
 function hasFaqSection(markdown, language = "en") {
   if (normalizeLanguage(language) === "es") {
     return /^##\s+(?:FAQ|Preguntas frecuentes|Preguntas comunes)/im.test(markdown || "");
@@ -80,6 +171,17 @@ function qualityGate(article = {}) {
     });
   }
 
+  const aiTellMessage = formatAiTellIssue(markdown);
+  if (aiTellMessage) {
+    issues.push({
+      code: "ai_tells",
+      message: aiTellMessage,
+      severity: "blocking",
+      repairable: true,
+      recommendation: "run AI-tell cleanup and targeted repair before publishing",
+    });
+  }
+
   return {
     pass: issues.length === 0,
     issues,
@@ -99,6 +201,10 @@ function issueMessages(qa) {
 }
 
 module.exports = {
+  AI_TELL_PHRASES,
+  cleanupAiTellPhrases,
+  detectAiTellPhrases,
+  formatAiTellIssue,
   qualityGate,
   issueMessages,
   hasFaqSection,

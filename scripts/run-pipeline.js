@@ -31,6 +31,12 @@ const { ping: hcPing } = require("./lib/heartbeat");
 const { warmUp } = require("./lib/warmup");
 const { buildSchemas, renderSchemaBlock, NICHE_TO_CATEGORY_SLUG } = require("./lib/schema");
 const { filterPipelineKeywords, keywordStateForArticle, normalizeLanguage } = require("./lib/spanish-gate");
+const {
+  AI_TELL_PHRASES,
+  cleanupAiTellPhrases,
+  detectAiTellPhrases,
+  formatAiTellIssue,
+} = require("./lib/quality");
 
 /**
  * Granular healthcheck — pings a per-step HEALTHCHECK_URL_<STEP> if
@@ -77,6 +83,7 @@ const GEN_COUNT = parseInt(args[args.indexOf("--gen") + 1]) || (args.includes("-
 const DO_PUBLISH = !args.includes("--no-pub");
 const INCLUDE_ES = args.includes("--include-es");
 let spanishPipelineEnabled = false;
+const FORBIDDEN_AI_TELL_LIST = AI_TELL_PHRASES.map((phrase) => `"${phrase}"`).join(", ");
 
 // --- helpers ---
 // Columns the pipeline writes that the production schema doesn't have yet.
@@ -194,6 +201,68 @@ async function gpt(model, system, user, maxTokens, jsonMode = false) {
       await new Promise((r) => setTimeout(r, 2000 * (i + 1)));
     }
   }
+}
+
+async function runAiTellMiniRepair(markdown, matches) {
+  const phrases = Array.from(new Set(matches.map((match) => match.phrase)));
+  return gpt(
+    "gpt-4o-mini",
+    `You are a surgical copy editor. Remove only these forbidden AI-tell phrases: ${phrases.map((phrase) => `"${phrase}"`).join(", ")}. Do not regenerate the article. Rewrite only the sentences that contain those phrases. Preserve headings, markdown links, affiliate tags, tables, word count, facts, and structure. Output the complete markdown only.`,
+    `Forbidden phrases still present:
+${phrases.map((phrase) => `- ${phrase}`).join("\n")}
+
+Article markdown:
+${markdown}`,
+    8000
+  );
+}
+
+async function scrubAiTellsForQa(markdown, label = "article") {
+  const deterministic = cleanupAiTellPhrases(markdown);
+  let text = deterministic.text;
+  let remaining = detectAiTellPhrases(text);
+  let usage = null;
+  let repairError = null;
+
+  if (deterministic.removed.length > 0) {
+    console.log(
+      `${ts()} 🧽 AI-tell cleanup (${label}): removed ${deterministic.before.length} phrase(s)`
+    );
+  }
+
+  if (remaining.length > 0) {
+    console.log(
+      `${ts()} 🛠️  AI-tell mini repair (${label}): ${remaining.length} phrase(s) still present`
+    );
+    try {
+      const repairRes = await runAiTellMiniRepair(text, remaining);
+      usage = repairRes.usage;
+      const repaired = cleanupAiTellPhrases(repairRes.text);
+      const originalWords = text.split(/\s+/).filter(Boolean).length;
+      const repairedWords = repaired.text.split(/\s+/).filter(Boolean).length;
+      if (repairedWords < Math.max(1000, originalWords - 100)) {
+        repairError = `mini repair shortened too much (${originalWords}w -> ${repairedWords}w)`;
+      } else {
+        text = repaired.text;
+        remaining = detectAiTellPhrases(text);
+      }
+    } catch (error) {
+      repairError = error.message;
+    }
+  }
+
+  if (repairError) {
+    console.log(`${ts()} ⚠️  AI-tell mini repair skipped/failed (${label}): ${repairError}`);
+  }
+
+  return {
+    text,
+    changed: text !== String(markdown || ""),
+    removed: deterministic.removed,
+    remaining,
+    usage,
+    repairError,
+  };
 }
 
 async function wp(method, endpoint, body) {
@@ -578,7 +647,7 @@ Rules:
 4. At first mention of a product, wrap it: [AFFILIATE:brand_name_lowercase]Product Name[/AFFILIATE]
 5. Add a '> **Quick Verdict:**' blockquote at the very top (before the intro) — 2-3 sentences with a clear recommendation.
 6. Add a '**Key Takeaways**' bullet list right after the Quick Verdict.
-7. AVOID AI-tells: "in today's fast-paced world", "it's important to note", "let's dive in", "revolutionary", "game-changer", "seamless", "cutting-edge", "unlock", "harness the power", "when it comes to", "delve into", "let's explore", "elevate your".
+7. AVOID these exact AI-tell phrases: ${FORBIDDEN_AI_TELL_LIST}. Remove or replace every occurrence.
 8. Use 2nd person ("you"), active voice, contractions OK.
 9. ⚠️ MINIMUM 2000 WORDS — this is non-negotiable. Short sections must be expanded with examples.
 10. Cover EVERY section from the outline fully. DO NOT skip sections or write one-liners.
@@ -666,7 +735,7 @@ Output: the COMPLETE expanded markdown article starting with # heading. No pream
 STRICT RULES:
 1. NEVER remove paragraphs, sections, or list items — only rewrite individual sentences
 2. NEVER shorten the article — if unsure, leave the original sentence intact
-3. Remove AI-tells: "in today's fast-paced world", "it's important to note", "let's dive in", "revolutionary", "game-changer", "seamless", "cutting-edge", "unlock", "harness the power", "in the realm of", "when it comes to", "whether you're", "in the world of", "delve into", "let's explore", "let's take a look", "elevate your", "landscape", "ecosystem"
+3. Remove these exact AI-tell phrases: ${FORBIDDEN_AI_TELL_LIST}. Remove or replace every occurrence; do not leave close variants.
 4. Fix grammar errors and awkward phrasing
 5. Ensure every tool has both pros AND cons stated clearly
 6. Keep all [AFFILIATE:...] tags EXACTLY as-is (don't touch them)
@@ -724,6 +793,10 @@ Rules: Start with "## FAQ" heading. Each question as "###" sub-heading. Each ans
         console.log(`   ⚠️  FAQ injection failed: ${e.message.slice(0, 80)}`);
       }
     }
+
+    const aiTellScrub = await scrubAiTellsForQa(finalText, `generated:${outline.slug}`);
+    if (aiTellScrub.usage) totalCost += estimateCost("gpt-4o-mini", aiTellScrub.usage);
+    finalText = aiTellScrub.text;
 
     // Affiliate links
     const affiliates = await supa("GET", "affiliates?status=eq.active");
@@ -898,22 +971,8 @@ function qualityGate(article) {
   ];
   if (aiTellsHard.some((re) => re.test(md))) issues.push("AI-tell in body");
 
-  const aiTellsSoft = [
-    /\bwhen it comes to\b/i,
-    /\bwhether you'?re\b/i,
-    /\bin (?:the |today's )?(?:fast-paced|digital|modern) world\b/i,
-    /\bin the (?:realm|world|landscape|ecosystem) of\b/i,
-    /\blet'?s (?:dive|explore|take a look|delve)\b/i,
-    /\b(?:revolutioniz|game[- ]chang|cutting[- ]edge|seamless(?:ly)?|harness the power)\b/i,
-    /\b(?:unlock the (?:full )?potential|elevate your)\b/i,
-    /\bit'?s (?:important|worth) (?:to note|noting)\b/i,
-    /\bdelve into\b/i,
-  ];
-  const softHits = aiTellsSoft.reduce((sum, re) => {
-    const m = md.match(new RegExp(re.source, re.flags + "g"));
-    return sum + (m ? m.length : 0);
-  }, 0);
-  if (softHits >= 5) issues.push(`${softHits} AI-tell phrases (polish step didn't scrub)`);
+  const aiTellIssue = formatAiTellIssue(md);
+  if (aiTellIssue) issues.push(aiTellIssue);
 
   // Unfinished templates
   if (/\[AFFILIATE:[^\]]*\][^\[]*\[\/AFFILIATE\]/i.test(md)) {
@@ -1535,6 +1594,18 @@ async function publishAllDrafts(maxCount = 10) {
     let qa;
     try {
       article.content_markdown = aggressiveClean(article.content_markdown);
+      const aiTellScrub = await scrubAiTellsForQa(
+        article.content_markdown,
+        `draft:${article.slug || article.id}`
+      );
+      if (aiTellScrub.changed) {
+        article.content_markdown = aiTellScrub.text;
+        article.word_count = article.content_markdown.split(/\s+/).filter(Boolean).length;
+        await supa("PATCH", `articles?id=eq.${article.id}`, {
+          content_markdown: article.content_markdown,
+          word_count: article.word_count,
+        }).catch(() => {});
+      }
       qa = qualityGate(article);
     } catch (prepErr) {
       skippedCount++;
