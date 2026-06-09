@@ -29,6 +29,7 @@ const auth = Buffer.from(`${WP_USERNAME}:${WP_ADMIN_PASSWORD}`).toString("base64
 
 const args = process.argv.slice(2);
 const DRY = !args.includes("--go");
+const ALLOW_CROSS_LANG = args.includes("--allow-cross-lang");
 const MAX_LINKS_PER_ARTICLE = parseInt(args[args.indexOf("--max") + 1]) || 3;
 
 async function supa(method, endpoint, body) {
@@ -86,7 +87,7 @@ function replaceFirstPlain(html, brand, url) {
 
   const articles = await supa(
     "GET",
-    "articles?status=eq.published&select=id,title,slug,wp_post_id,content_markdown&order=published_at.desc"
+    "articles?status=eq.published&select=id,title,slug,language,wp_url,wp_post_id,content_markdown&order=published_at.desc"
   );
   console.log(`Loaded ${articles.length} published articles.\n`);
 
@@ -109,7 +110,7 @@ function replaceFirstPlain(html, brand, url) {
   const candidates = articles.map((a) => {
     // From the slug, get distinctive token pairs/triples
     const slugWords = a.slug.split("-").filter((w) => !STOP_WORDS.has(w.toLowerCase()) && w.length > 2);
-    return { slug: a.slug, title: a.title, slugWords, id: a.id };
+    return { slug: a.slug, title: a.title, slugWords, id: a.id, language: a.language || "en", wp_url: a.wp_url || null };
   });
 
   // For each article, find a brand/topic mentioned that matches another article's slug.
@@ -162,14 +163,17 @@ function replaceFirstPlain(html, brand, url) {
 
       const brandSlug = brand.toLowerCase().replace(/\./g, "").replace(/\s+/g, "-");
       const targetCandidates = candidates.filter(
-        (c) => c.id !== article.id && c.slug.toLowerCase().includes(brandSlug)
+        (c) =>
+          c.id !== article.id &&
+          (ALLOW_CROSS_LANG || (c.language || "en") === (article.language || "en")) &&
+          c.slug.toLowerCase().includes(brandSlug)
       );
       if (targetCandidates.length === 0) continue;
 
       const target =
         targetCandidates.find((c) => c.slug.toLowerCase().startsWith(brandSlug)) ||
         targetCandidates[0];
-      const targetUrl = `https://aipickd.com/${target.slug}/`;
+      const targetUrl = target.wp_url || `https://aipickd.com/${target.slug}/`;
 
       if (DRY) {
         // Operate on markdown, just check if brand appears outside existing []()

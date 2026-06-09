@@ -51,6 +51,10 @@ const NICHE_TO_CATEGORY_SLUG = {
   "ai-hosting": "ai-infrastructure",
 };
 
+function schemaLanguage(article = {}) {
+  return String(article.language || "en").toLowerCase().trim() === "es" ? "es" : "en-US";
+}
+
 // ──────────────────────────────────────────────────────────────────
 // Extractors
 // ──────────────────────────────────────────────────────────────────
@@ -201,7 +205,7 @@ function buildSchemas(article, opts = {}) {
     dateModified,
     mainEntityOfPage: { "@type": "WebPage", "@id": url },
     isAccessibleForFree: true,
-    inLanguage: "en-US",
+    inLanguage: schemaLanguage(article),
     wordCount,
     author: { "@type": "Organization", name: ORG_NAME, url: SITE },
     publisher: { "@type": "Organization", name: ORG_NAME, url: SITE },
@@ -327,6 +331,7 @@ module.exports = {
   SITE,
   CATEGORY_NAMES,
   NICHE_TO_CATEGORY_SLUG,
+  schemaLanguage,
   extractFAQs,
   extractHowToSteps,
   deriveRating,

@@ -36,7 +36,12 @@ const { notifyAlert } = require('./notify.js');
 
 // ── Config ───────────────────────────────────────────────────────────────────
 const args    = process.argv.slice(2);
-const DRY_RUN = args.includes('--dry-run');
+const DRY_RUN = !(
+  args.includes("--go") ||
+  args.includes("--fix") ||
+  args.includes("--apply") ||
+  args.includes("--confirm")
+);
 const CAP     = 3; // max articles refreshed per run
 const STALE_DAYS = 90;
 

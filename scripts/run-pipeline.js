@@ -21,6 +21,7 @@
 
 const fs = require("fs");
 const path = require("path");
+const { spawnSync } = require("node:child_process");
 const { notify, notifyArticle, notifyPipeline, notifyAlert, calcQualityScore } = require("./notify.js");
 const { loadEnv } = require("./lib/env");
 const { fetchWithRetry } = require("./lib/http");
@@ -29,6 +30,7 @@ const { validateRenderedHtml } = require("./lib/html-validator");
 const { ping: hcPing } = require("./lib/heartbeat");
 const { warmUp } = require("./lib/warmup");
 const { buildSchemas, renderSchemaBlock, NICHE_TO_CATEGORY_SLUG } = require("./lib/schema");
+const { filterPipelineKeywords, keywordStateForArticle, normalizeLanguage } = require("./lib/spanish-gate");
 
 /**
  * Granular healthcheck — pings a per-step HEALTHCHECK_URL_<STEP> if
@@ -73,13 +75,27 @@ const DAILY_BUDGET = parseFloat(MAX_AI_COST_PER_DAY_USD || "10");
 const args = process.argv.slice(2);
 const GEN_COUNT = parseInt(args[args.indexOf("--gen") + 1]) || (args.includes("--no-gen") ? 0 : 1);
 const DO_PUBLISH = !args.includes("--no-pub");
+const INCLUDE_ES = args.includes("--include-es");
+let spanishPipelineEnabled = false;
 
 // --- helpers ---
 // Columns the pipeline writes that the production schema doesn't have yet.
 // On a 42703 "column does not exist", supa() strips matching keys and retries
 // once instead of failing the whole publish (which previously left WP posts
 // orphaned with the article still marked draft in Supabase).
-const OPTIONAL_COLUMNS = new Set(["idempotency_key", "quality_score"]);
+const OPTIONAL_COLUMNS = new Set([
+  "idempotency_key",
+  "quality_score",
+  "qa_issues",
+  "last_error",
+  "last_error_at",
+  "retry_count",
+  "last_qa_at",
+  "repair_status",
+  "repair_notes",
+  "last_publish_error",
+  "language",
+]);
 
 async function supa(method, endpoint, body) {
   const doRequest = async (payload) => {
@@ -376,12 +392,16 @@ async function generateOne() {
   } catch {}
 
   // Fetch top 5 queued keywords — sorted by priority DESC, then search_volume DESC
-  const keywords = await supa(
+  const rawKeywords = await supa(
     "GET",
-    "keywords?status=eq.queued&assigned_article_id=is.null&order=priority.desc,search_volume.desc&limit=10&select=*,niche:niches(slug,name)"
+    "keywords?status=eq.queued&assigned_article_id=is.null&order=priority.desc,search_volume.desc&limit=50&select=*,niche:niches(slug,name)"
   );
+  const keywords = filterPipelineKeywords(rawKeywords || [], {
+    includeEs: INCLUDE_ES,
+    spanishPipelineEnabled,
+  });
   if (!keywords || keywords.length === 0) {
-    return { skipped: true, reason: "No queued keywords" };
+    return { skipped: true, reason: "No queued keywords after language gate" };
   }
   // (sortedKeywords is built below after overload check)
 
@@ -399,7 +419,7 @@ async function generateOne() {
     const failCount = Array.isArray(failedRows) ? failedRows.length : 0;
     if (failCount >= 3) {
       console.log(`   ⏭️  Skip "${candidate.keyword}" — already failed QA ${failCount}× (marking exhausted)`);
-      await supa("PATCH", `keywords?id=eq.${candidate.id}`, { status: "published" }).catch(() => {}); // move it out of queue
+      await supa("PATCH", `keywords?id=eq.${candidate.id}`, { status: "qa_failed" }).catch(() => {});
       continue;
     }
     if (failCount > 0) {
@@ -415,7 +435,7 @@ async function generateOne() {
   console.log(`${ts()} 📝 Keyword: "${kw.keyword}" (${kw.niche?.name})`);
 
   // ── Language: force Spanish (/es/) generation when the keyword is es ──────
-  const LANG = (kw.language || "en").toLowerCase();
+  const LANG = normalizeLanguage(kw.language);
   const ES = LANG === "es";
   GEN_LANG_DIRECTIVE = ES
     ? `🌎 IDIOMA OBLIGATORIO — Escribe ABSOLUTAMENTE TODO en ESPAÑOL DE MÉXICO natural (usa "tú", nunca "usted"), para una audiencia de Latinoamérica. Título, slug, encabezados, cuerpo, tablas, FAQ, "Veredicto rápido", "Puntos clave", cada "Dato clave", y la meta description: TODO en español. JAMÁS en inglés. Suena como un reviewer mexicano que SÍ probó las herramientas en persona. Evita clichés y traducciones literales: "en el mundo actual", "sin duda alguna", "es importante destacar", "en conclusión", "descubre el poder", "lleva tu X al siguiente nivel", "en la era digital", "revoluciona". Los TÍTULOS deben tener gancho (40-60 caracteres, con un número + "2026", ángulo "lo probé/comparé yo"). Ejemplos del estilo: "Probé 7 IAs para crear videos: solo 2 valen la pena", "ChatGPT vs Claude vs Gemini: ¿cuál explica mejor? (2026)", "IA gratis vs de pago: ¿cuándo SÍ vale pagar? (2026)". NUNCA títulos fríos como "Mejores herramientas IA 2026".\n\n`
@@ -789,7 +809,7 @@ Return JSON: { "variants": ["Title 1", "Title 2"] }`,
     const article = Array.isArray(inserted) ? inserted[0] : inserted;
 
     await supa("PATCH", `keywords?id=eq.${kw.id}`, {
-      status: "published",
+      status: "generated",
       assigned_article_id: article.id,
     });
 
@@ -989,6 +1009,67 @@ function qualityGate(article) {
   if (!hasFaq) issues.push("missing FAQ section (needed for schema)");
 
   return { pass: issues.length === 0, issues };
+}
+
+function qaIssueCode(message) {
+  const text = String(message || "").toLowerCase();
+  if (text.includes("too short")) return "too_short";
+  if (text.includes("faq")) return "missing_faq";
+  if (text.includes("keyword")) return "missing_keyword";
+  if (text.includes("html")) return "html_validator";
+  if (text.includes("duplicate")) return "duplicate";
+  if (text.includes("language")) return "language_mismatch";
+  if (text.includes("schema")) return "schema_error";
+  return "qa_failed";
+}
+
+function qaIssueObjects(issues, fallbackCode = "qa_failed") {
+  return (issues || []).map((issue) => {
+    const message = typeof issue === "string" ? issue : issue.message || issue.code || fallbackCode;
+    return {
+      code: issue.code || qaIssueCode(message) || fallbackCode,
+      message,
+      severity: issue.severity || "blocking",
+      repairable: issue.repairable !== false,
+      recommendation: issue.recommendation || "repair or regenerate before publishing",
+    };
+  });
+}
+
+function qaFailurePatch(issues, fallbackCode = "qa_failed") {
+  const structured = qaIssueObjects(issues, fallbackCode);
+  return {
+    status: "qa_failed",
+    quality_score: 0,
+    qa_issues: structured,
+    last_error: structured.map((issue) => issue.message).join(", ").slice(0, 1000),
+    last_error_at: new Date().toISOString(),
+    last_qa_at: new Date().toISOString(),
+    repair_status: structured.every((issue) => issue.repairable) ? "repairable" : "blocked",
+  };
+}
+
+async function markKeywordForArticle(article, stateOverride = null) {
+  if (!article || !article.keyword_id) return;
+  const status = stateOverride || keywordStateForArticle(article);
+  await supa("PATCH", `keywords?id=eq.${article.keyword_id}`, {
+    status,
+    assigned_article_id: article.id,
+    updated_at: new Date().toISOString(),
+  }).catch(() => {});
+}
+
+function runWpLanguageBridgeProbe() {
+  const probe = spawnSync(process.execPath, [path.join(__dirname, "wp-language-bridge-probe.js")], {
+    cwd: path.join(__dirname, ".."),
+    encoding: "utf8",
+    timeout: 60_000,
+  });
+  if (probe.status === 0) return { pass: true, output: probe.stdout || "" };
+  return {
+    pass: false,
+    output: `${probe.stdout || ""}${probe.stderr || ""}`.trim(),
+  };
 }
 
 // --- DALL-E image generation + Unsplash fallback ---
@@ -1203,7 +1284,8 @@ function formatNumbers(text) {
 }
 
 // --- Affiliate disclosure block (FTC compliance) ---
-function affiliateDisclosure(lang = "en") {
+function affiliateDisclosure(language = "en") {
+  const lang = normalizeLanguage(language);
   const text = lang === "es"
     ? `⚡ <strong>Aviso:</strong> Este artículo contiene enlaces de afiliado. Si compras a través de nuestros enlaces, podríamos ganar una comisión sin costo extra para ti. Solo recomendamos herramientas que probamos y en las que confiamos.`
     : `⚡ <strong>Disclosure:</strong> This article contains affiliate links. If you purchase through our links, we may earn a commission at no extra cost to you. We only recommend tools we've evaluated and trust.`;
@@ -1387,12 +1469,30 @@ async function publishAllDrafts(maxCount = 10) {
   // entire workflow timeout. (Image gen + WP upload + schema = ~60s normal,
   // 4 min is a generous ceiling.)
   const ARTICLE_PUBLISH_BUDGET_MS = 4 * 60_000;
+  let wpLanguageBridgeOk = null;
 
   for (const article of drafts) {
     const articleStart = Date.now();
     console.log(`${ts()} 📤 Publishing "${article.title?.slice(0, 60)}"`);
 
     // Duplicate detection — skip if very similar title already published.
+    if (normalizeLanguage(article.language) === "es") {
+      if (wpLanguageBridgeOk === null) {
+        const probe = runWpLanguageBridgeProbe();
+        wpLanguageBridgeOk = probe.pass;
+        if (!probe.pass) {
+          const msg = `WordPress language bridge probe failed; Spanish publishing is blocked. ${probe.output.slice(0, 700)}`;
+          trace(msg);
+          notifyAlert(`Spanish publish blocked\n${msg}`, "critical").catch(() => {});
+        }
+      }
+      if (!wpLanguageBridgeOk) {
+        skippedCount++;
+        console.log("   BLOCKER: Spanish article skipped because _pipeline_lang=es could not be verified.");
+        continue;
+      }
+    }
+
     // Previously the threshold was "any 5-word phrase matches" which produced
     // false positives like "best ai writing tools 2026" against any other
     // "best * 2026" article. Tightened to 7 words AND require >= 0.6 jaccard
@@ -1424,7 +1524,8 @@ async function publishAllDrafts(maxCount = 10) {
     if (isDuplicate) {
       skippedCount++;
       console.log(`   ⏩ skip "${article.title.slice(0, 50)}": duplicate of published article`);
-      await supa("PATCH", `articles?id=eq.${article.id}`, { status: "qa_failed" }).catch(() => {});
+      await supa("PATCH", `articles?id=eq.${article.id}`, qaFailurePatch(["duplicate of published article"], "duplicate")).catch(() => {});
+      await markKeywordForArticle(article, "qa_failed");
       continue;
     }
 
@@ -1457,9 +1558,9 @@ async function publishAllDrafts(maxCount = 10) {
       console.log(`   ⏩ skip "${article.title.slice(0, 50)}": ${issuesSummary}`);
       // Mark as qa_failed so it doesn't clog the queue on future runs
       await supa("PATCH", `articles?id=eq.${article.id}`, {
-        status: "qa_failed",
-        quality_score: 0,
+        ...qaFailurePatch(qa.issues),
       }).catch(() => {});
+      await markKeywordForArticle(article, "qa_failed");
       // Notify #alertas with failure reason (so you can fix prompts faster)
       notifyAlert(
         `🚫 **QA Failed:** ${article.title.slice(0, 70)}\n\n**Razones:** ${issuesSummary}\n**Palabras:** ${article.word_count || 0}w`,
@@ -1473,7 +1574,7 @@ async function publishAllDrafts(maxCount = 10) {
       // Inject Table of Contents for long articles (inside the per-article try
       // so a ToC parse error skips this draft instead of crashing the run).
       article.content_markdown = injectToC(article.content_markdown);
-      const artLang = (article.language || "en").toLowerCase();
+      const artLang = normalizeLanguage(article.language);
       const isES = artLang === "es";
 
       // Prepend affiliate disclosure (FTC compliance) — localized per language
@@ -1492,9 +1593,9 @@ async function publishAllDrafts(maxCount = 10) {
         const issuesSummary = htmlIssues.join(", ");
         console.log(`   ⏩ skip "${article.title.slice(0, 50)}": HTML issues — ${issuesSummary}`);
         await supa("PATCH", `articles?id=eq.${article.id}`, {
-          status: "qa_failed",
-          quality_score: 0,
+          ...qaFailurePatch(htmlIssues, "html_validator"),
         }).catch(() => {});
+        await markKeywordForArticle(article, "qa_failed");
         notifyAlert(
           `🚫 **HTML validator blocked publish:** ${article.title.slice(0, 70)}\n\n**Issues:** ${issuesSummary}\n\nThis is the post-render check that catches what the markdown qualityGate misses. Inspect the article markdown and either fix the generation prompt or run \`fix-stale-html\` after manual cleanup.`,
           "warning"
@@ -1571,6 +1672,12 @@ async function publishAllDrafts(maxCount = 10) {
           idempotency_key: idempotencyKey,
           published_at: new Date().toISOString(),
         }).catch(() => {});
+        await markKeywordForArticle({
+          ...article,
+          status: "published",
+          wp_post_id: dup.wp_post_id,
+          wp_url: dup.wp_url,
+        });
         published.push(article);
         continue;
       }
@@ -1587,6 +1694,12 @@ async function publishAllDrafts(maxCount = 10) {
           idempotency_key: idempotencyKey,
           published_at: new Date().toISOString(),
         }).catch(() => {});
+        await markKeywordForArticle({
+          ...article,
+          status: "published",
+          wp_post_id: existing.id,
+          wp_url: existing.link,
+        });
         published.push(article);
         continue;
       }
@@ -1640,6 +1753,12 @@ async function publishAllDrafts(maxCount = 10) {
         idempotency_key: idempotencyKey,
         published_at: new Date().toISOString(),
         quality_score: calcQualityScore(article.word_count, []),
+      });
+      await markKeywordForArticle({
+        ...article,
+        status: finalStatus,
+        wp_post_id: wpPost.id,
+        wp_url: wpPost.link,
       });
       published.push({ title: article.title, wp_id: wpPost.id, url: wpPost.link });
       console.log(`   ✓ ${WP_STATUS === "publish" ? "LIVE" : "Draft"} WP #${wpPost.id}: ${article.title.slice(0, 55)}`);
@@ -1721,6 +1840,9 @@ async function publishAllDrafts(maxCount = 10) {
       // as `draft` but stamp a `last_publish_error` so it's diagnosable.
       await supa("PATCH", `articles?id=eq.${article.id}`, {
         last_updated_at: new Date().toISOString(),
+        last_publish_error: errMsg.slice(0, 1000),
+        last_error: errMsg.slice(0, 1000),
+        last_error_at: new Date().toISOString(),
       }).catch(() => {});
     }
 
@@ -1769,9 +1891,15 @@ function startSoftTimeoutWarning(label = "pipeline") {
   try {
     const cfgRows = await supa(
       "GET",
-      "pipeline_config?id=eq.00000000-0000-0000-0000-000000000001&select=paused,paused_reason,paused_by,paused_at"
+      "pipeline_config?id=eq.00000000-0000-0000-0000-000000000001&select=paused,paused_reason,paused_by,paused_at,spanish_pipeline_enabled"
     );
     const cfg = Array.isArray(cfgRows) && cfgRows.length > 0 ? cfgRows[0] : null;
+    spanishPipelineEnabled = Boolean(cfg && cfg.spanish_pipeline_enabled);
+    if (INCLUDE_ES || spanishPipelineEnabled) {
+      console.log(`   Spanish gate: enabled (${INCLUDE_ES ? "--include-es" : "pipeline_config"})`);
+    } else {
+      console.log("   Spanish gate: disabled (language=es keywords ignored)");
+    }
     if (cfg && cfg.paused === true) {
       const reason = cfg.paused_reason || "(no reason given)";
       const by = cfg.paused_by || "(unknown)";
@@ -1868,7 +1996,7 @@ function startSoftTimeoutWarning(label = "pipeline") {
       console.log(`🔗 INTERNAL LINKS (auto-link new articles to existing)`);
       try {
         const { spawnSync } = require("child_process");
-        const r = spawnSync(process.execPath, [path.join(__dirname, "add-internal-links.js"), "--go"], {
+        const r = spawnSync(process.execPath, [path.join(__dirname, "add-internal-links.js")], {
           stdio: "inherit",
           timeout: 5 * 60 * 1000,
         });

@@ -139,7 +139,7 @@ jobs:
       - name: Dedup keyword queue (remove similar keywords)
         id: post-dedup-keywords
         continue-on-error: true
-        run: node scripts/dedup-keywords.js --fix
+        run: node scripts/dedup-keywords.js
 
       - name: Cleanup stuck drafts (draft >5 days with no WP post)
         id: post-cleanup-drafts
@@ -149,7 +149,7 @@ jobs:
       - name: Auto-dedup WordPress (remove duplicate posts)
         id: post-dedup-wp
         continue-on-error: true
-        run: node scripts/dedup-wordpress.js --fix --quiet
+        run: node scripts/dedup-wordpress.js --quiet
 
       - name: Add internal links to newly published articles
         id: post-internal-links
@@ -159,7 +159,7 @@ jobs:
       - name: Inject CTA buttons + reading time into new articles
         id: post-cta
         continue-on-error: true
-        run: node scripts/cta-injector.js --hours 6 --go
+        run: node scripts/cta-injector.js --hours 6
 
       - name: Trending keywords (Mondays only)
         id: post-trending

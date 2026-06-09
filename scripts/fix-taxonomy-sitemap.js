@@ -37,7 +37,12 @@ try {
   });
 } catch {}
 
-const DRY_RUN = process.argv.includes("--dry-run");
+const DRY_RUN = !(
+  process.argv.includes("--go") ||
+  process.argv.includes("--fix") ||
+  process.argv.includes("--apply") ||
+  process.argv.includes("--confirm")
+);
 
 const PLUGIN_SLUG  = "aipickd-sitemap-fix";
 const PLUGIN_FILE  = `${PLUGIN_SLUG}/${PLUGIN_SLUG}.php`;
