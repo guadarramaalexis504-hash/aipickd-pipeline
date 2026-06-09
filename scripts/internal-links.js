@@ -18,11 +18,14 @@
  */
 
 const { loadEnv } = require('./lib/env');
+const { hasWriteFlag } = require("./lib/cli-safety");
+const { filterCandidatesByLanguage, buildRelatedBlock } = require("./lib/internal-linking");
 const env = loadEnv();
 
 const args     = process.argv.slice(2);
-const DRY_RUN  = args.includes('--dry-run');
+const DRY_RUN  = !hasWriteFlag(args, new Set(["--go"]));
 const ALL_MODE = args.includes('--all');
+const ALLOW_CROSS_LANG = args.includes("--allow-cross-lang");
 const HOURS    = parseInt(args[args.indexOf('--hours') + 1]) || 2;
 const MAX_RELATED = 5;   // links per article
 const MIN_SCORE   = 1;   // minimum word overlap to be considered related
@@ -82,20 +85,12 @@ function relatednessScore(a, b) {
 
 // Find top N related articles from a pool
 function findRelated(article, pool, n = MAX_RELATED) {
-  return pool
+  return filterCandidatesByLanguage(article, pool, { allowCrossLang: ALLOW_CROSS_LANG })
     .filter(p => p.id !== article.id)
     .map(p => ({ ...p, score: relatednessScore(article, p) }))
     .filter(p => p.score >= MIN_SCORE)
     .sort((a, b) => b.score - a.score)
     .slice(0, n);
-}
-
-// Build "Related Articles" HTML block
-function buildRelatedBlock(articles) {
-  const links = articles
-    .map(a => `<li><a href="${a.wp_url}" rel="nofollow">${a.title}</a></li>`)
-    .join('\n');
-  return `\n\n<div class="aipickd-related"><h3>Related Articles</h3><ul>\n${links}\n</ul></div>`;
 }
 
 // Check if WP post already has a related articles block
@@ -106,11 +101,12 @@ function hasRelatedBlock(html) {
 // --- main ---
 (async () => {
   console.log('== AIPickd internal-links ==');
-  console.log(`   Mode: ${DRY_RUN ? 'DRY RUN' : ALL_MODE ? 'ALL articles' : `last ${HOURS}h`}\n`);
+  console.log(`   Mode: ${DRY_RUN ? 'REPORT ONLY (add --go to write)' : ALL_MODE ? 'WRITE all articles' : `WRITE last ${HOURS}h`}`);
+  console.log(`   Cross-language links: ${ALLOW_CROSS_LANG ? "allowed" : "blocked"}\n`);
 
   // 1) Load all published articles with wp_url
   console.log('1) Loading published articles from Supabase...');
-  const all = await supa('GET', 'articles?status=eq.published&wp_post_id=not.is.null&select=id,title,slug,meta_description,article_type,wp_post_id,wp_url,published_at');
+  const all = await supa('GET', 'articles?status=eq.published&wp_post_id=not.is.null&select=id,title,slug,language,meta_description,article_type,wp_post_id,wp_url,published_at');
   if (!all || all.length === 0) { console.log('   No published articles.'); return; }
   console.log(`   ${all.length} published articles loaded.\n`);
 
@@ -161,7 +157,7 @@ function hasRelatedBlock(html) {
       // Append related articles block to raw content (not rendered)
       const rawPost = await wp('GET', `posts/${article.wp_post_id}?context=edit&_fields=id,content`);
       const rawContent = rawPost.content?.raw || rawPost.content?.rendered || '';
-      const relatedBlock = buildRelatedBlock(related);
+      const relatedBlock = buildRelatedBlock(related, { language: article.language });
       const newContent = rawContent + relatedBlock;
 
       await wp('POST', `posts/${article.wp_post_id}`, { content: newContent });

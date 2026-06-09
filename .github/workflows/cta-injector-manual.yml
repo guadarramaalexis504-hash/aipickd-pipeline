@@ -58,7 +58,7 @@ jobs:
           HOURS: ${{ github.event.inputs.hours || '6' }}
           MODE: ${{ github.event.inputs.mode || 'live' }}
         run: |
-          ARGS="--hours $HOURS"
-          if [ "$MODE" != "dry-run" ]; then ARGS="$ARGS --go"; fi
-          echo "Running: node scripts/cta-injector.js $ARGS"
-          node scripts/cta-injector.js $ARGS
+          ARGS=(--hours "$HOURS")
+          if [ "$MODE" != "dry-run" ]; then ARGS+=(--go); fi
+          echo "Running: node scripts/cta-injector.js ${ARGS[*]}"
+          node scripts/cta-injector.js "${ARGS[@]}"

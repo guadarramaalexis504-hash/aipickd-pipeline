@@ -8,9 +8,9 @@
  * verify the publish path.
  *
  * Usage:
- *   node scripts/publish-pending-drafts.js              # publish up to 5 drafts
- *   node scripts/publish-pending-drafts.js --limit 1    # publish exactly 1
- *   node scripts/publish-pending-drafts.js --dry-run    # log without writing
+ *   node scripts/publish-pending-drafts.js              # report up to 5 drafts, no writes
+ *   node scripts/publish-pending-drafts.js --limit 1    # report exactly 1, no writes
+ *   node scripts/publish-pending-drafts.js --go         # publish up to 5 drafts
  *
  * Designed to be called via GitHub Actions workflow_dispatch or locally
  * with valid WP_ADMIN_PASSWORD. Failures are visible: WP auth (401/403)
@@ -18,7 +18,14 @@
  */
 
 const { loadEnv } = require("./lib/env");
+const { hasWriteFlag } = require("./lib/cli-safety");
+const { validateRenderedHtml } = require("./lib/html-validator");
+const { buildSchemas, renderSchemaBlock, NICHE_TO_CATEGORY_SLUG } = require("./lib/schema");
+const { buildRecoveryPublishPlan } = require("./lib/recovery-publisher");
+const { keywordStateForArticle, normalizeLanguage } = require("./lib/spanish-gate");
 const { notifyAlert } = require("./notify.js");
+const { spawnSync } = require("node:child_process");
+const path = require("node:path");
 
 const env = loadEnv();
 const {
@@ -30,13 +37,14 @@ const {
 
 const args = process.argv.slice(2);
 const LIMIT = parseInt(args[args.indexOf("--limit") + 1]) || 5;
-const DRY_RUN = args.includes("--dry-run");
+const DRY_RUN = !hasWriteFlag(args, new Set(["--go"]));
+const HAS_WP_AUTH = Boolean(WP_USERNAME && WP_ADMIN_PASSWORD);
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
   console.error("❌ Missing SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY");
   process.exit(2);
 }
-if (!WP_USERNAME || !WP_ADMIN_PASSWORD) {
+if (!DRY_RUN && !HAS_WP_AUTH) {
   console.error("❌ Missing WP_USERNAME / WP_ADMIN_PASSWORD");
   process.exit(2);
 }
@@ -47,7 +55,7 @@ const SUPA_HEADERS = {
   "Content-Type": "application/json",
   Prefer: "return=representation",
 };
-const WP_AUTH = "Basic " + Buffer.from(`${WP_USERNAME}:${WP_ADMIN_PASSWORD}`).toString("base64");
+const WP_AUTH = HAS_WP_AUTH ? "Basic " + Buffer.from(`${WP_USERNAME}:${WP_ADMIN_PASSWORD}`).toString("base64") : null;
 const UA = "Mozilla/5.0 (compatible; AIPickd-PublishManual/1.0)";
 
 function ts() {
@@ -66,6 +74,9 @@ async function supaPatch(path, body) {
   return r.json();
 }
 async function wpReq(method, endpoint, body) {
+  if (!HAS_WP_AUTH) {
+    throw new Error("WP auth missing; unavailable in report-only mode without WP_USERNAME / WP_ADMIN_PASSWORD");
+  }
   const r = await fetch(`https://aipickd.com/wp-json/wp/v2/${endpoint}`, {
     method,
     headers: {
@@ -84,6 +95,43 @@ async function wpReq(method, endpoint, body) {
     throw err;
   }
   return text ? JSON.parse(text) : null;
+}
+
+function ensureWpLanguageBridgeForSpanish(language) {
+  if (normalizeLanguage(language) !== "es") return true;
+  const probe = spawnSync(process.execPath, [path.join(__dirname, "wp-language-bridge-probe.js")], {
+    cwd: path.join(__dirname, ".."),
+    encoding: "utf8",
+    timeout: 60_000,
+  });
+  if (probe.status === 0) return true;
+  const out = `${probe.stdout || ""}${probe.stderr || ""}`.trim();
+  console.error(`${ts()} BLOCKER: WordPress language bridge probe did not pass. Spanish publishing is blocked.`);
+  if (out) console.error(out.slice(0, 1200));
+  return false;
+}
+
+async function submitIndexNow(url) {
+  if (!url) return;
+  const key = env.INDEXNOW_KEY || "aipickd2026";
+  const endpoints = [
+    `https://www.bing.com/indexnow?url=${encodeURIComponent(url)}&key=${key}`,
+    `https://yandex.com/indexnow?url=${encodeURIComponent(url)}&key=${key}`,
+    `https://api.indexnow.org/indexnow?url=${encodeURIComponent(url)}&key=${key}`,
+  ];
+  await Promise.allSettled(
+    endpoints.map((endpoint) => fetch(endpoint, { signal: AbortSignal.timeout(8000) }))
+  );
+}
+
+async function markKeywordForArticle(article) {
+  if (!article.keyword_id) return;
+  const status = keywordStateForArticle(article);
+  await supaPatch(`keywords?id=eq.${article.keyword_id}`, {
+    status,
+    assigned_article_id: article.id,
+    updated_at: new Date().toISOString(),
+  }).catch(() => {});
 }
 
 // Minimal MD→HTML (matches the main pipeline so output is identical)
@@ -123,27 +171,32 @@ function mdToHtml(md) {
 }
 
 (async () => {
-  console.log(`${ts()} ▶ publish-pending-drafts (limit=${LIMIT}, dry-run=${DRY_RUN})`);
+  console.log(`${ts()} ▶ publish-pending-drafts (limit=${LIMIT}, mode=${DRY_RUN ? "REPORT ONLY" : "WRITE --go"})`);
 
   // 1. Pre-flight: confirm WP auth works BEFORE we touch any drafts.
-  console.log(`${ts()} pre-flight: WP auth check…`);
-  try {
-    await wpReq("GET", "users/me?context=edit");
-    console.log(`${ts()} ✅ WP auth OK`);
-  } catch (e) {
-    console.error(`${ts()} ❌ WP auth FAILED: ${e.message}`);
-    notifyAlert(
-      `🚨 **publish-pending-drafts pre-flight failed**\n` +
-      `WP auth returned ${e.status || "?"}.\n` +
-      `Action: regenerate the Application Password at \`/wp-admin/profile.php\` and update \`WP_ADMIN_PASSWORD\` in GitHub Secrets.\n` +
-      `Error: \`${e.message?.slice(0, 200)}\``,
-      "critical"
-    ).catch(() => {});
-    process.exit(3);
+  if (HAS_WP_AUTH) {
+    console.log(`${ts()} pre-flight: WP auth check…`);
+    try {
+      await wpReq("GET", "users/me?context=edit");
+      console.log(`${ts()} ✅ WP auth OK`);
+    } catch (e) {
+      console.error(`${ts()} ❌ WP auth FAILED: ${e.message}`);
+      notifyAlert(
+        `🚨 **publish-pending-drafts pre-flight failed**\n` +
+        `WP auth returned ${e.status || "?"}.\n` +
+        `Action: regenerate the Application Password at \`/wp-admin/profile.php\` and update \`WP_ADMIN_PASSWORD\` in GitHub Secrets.\n` +
+        `Error: \`${e.message?.slice(0, 200)}\``,
+        "critical"
+      ).catch(() => {});
+      process.exitCode = 3;
+      return;
+    }
+  } else {
+    console.log(`${ts()} pre-flight: WP auth check skipped (missing credentials; report-only, no writes)`);
   }
 
   // 2. Fetch pending drafts (raw, no JOIN — keeps the query simple).
-  const drafts = await supaGet(`articles?status=eq.draft&wp_post_id=is.null&order=created_at.asc&limit=${LIMIT}&select=id,title,slug,meta_description,content_markdown,article_type,word_count,niche_id`);
+  const drafts = await supaGet(`articles?status=eq.draft&wp_post_id=is.null&order=created_at.asc&limit=${LIMIT}&select=id,title,slug,meta_description,content_markdown,article_type,word_count,niche_id,keyword_id,language,primary_keyword,quality_score`);
   console.log(`${ts()} fetched ${drafts.length} draft(s)`);
 
   if (drafts.length === 0) {
@@ -156,7 +209,7 @@ function mdToHtml(md) {
   const nicheBySlug = Object.fromEntries((niches || []).map((n) => [n.id, n.slug]));
 
   // 4. WP categories
-  const cats = await wpReq("GET", "categories?per_page=20&_fields=id,slug");
+  const cats = HAS_WP_AUTH ? await wpReq("GET", "categories?per_page=20&_fields=id,slug") : [];
   const catMap = Object.fromEntries((cats || []).map((c) => [c.slug, c.id]));
   const nicheCatMap = {
     "ai-writing": catMap["ai-writing"],
@@ -177,12 +230,99 @@ function mdToHtml(md) {
         .replace(/\[AFFILIATE:[^\]]+\]([^\[]*)\[\/AFFILIATE\]/gi, "$1")
         .replace(/\[AFFILIATE:[^\]]+\]/gi, "")
         .replace(/\[\/AFFILIATE\]/gi, "");
-      const html = mdToHtml(md);
+      const language = normalizeLanguage(a.language);
+      const renderedHtml = mdToHtml(md);
+      const plan = buildRecoveryPublishPlan({ ...a, language, content_markdown: md, content_html: renderedHtml });
+      let html = `${plan.disclosure}${renderedHtml}`;
       const nicheSlug = nicheBySlug[a.niche_id];
       const catId = nicheCatMap[nicheSlug];
 
       if (DRY_RUN) {
-        console.log(`${ts()} (dry-run) would POST to WP: ${html.length} bytes, cat=${catId || "none"}`);
+        console.log(`${ts()} report-only plan:`);
+        console.log(JSON.stringify({
+          article_id: plan.articleId,
+          slug: plan.slug,
+          will_write: false,
+          language: plan.language,
+          planned_wp_meta: plan.wpMeta,
+          planned_category: catId || null,
+          wp_auth: HAS_WP_AUTH ? "available" : "missing_not_required_report_only",
+          idempotency_key: plan.idempotencyKey,
+          qa: {
+            pass: plan.qa.pass,
+            issues: plan.qa.issues,
+          },
+          schema: plan.schema,
+          indexnow: plan.indexNow,
+          html_bytes: html.length,
+        }, null, 2));
+        continue;
+      }
+
+      if (!ensureWpLanguageBridgeForSpanish(language)) {
+        failed++;
+        await supaPatch(`articles?id=eq.${a.id}`, {
+          status: "needs_repair",
+          last_error: "wordpress_language_bridge_blocked",
+          last_error_at: new Date().toISOString(),
+          repair_status: "blocked_language_bridge",
+        }).catch(() => {});
+        await markKeywordForArticle({ ...a, status: "needs_repair" });
+        continue;
+      }
+
+      if (!plan.qa.pass) {
+        failed++;
+        const issues = plan.qa.issues.map((issue) => issue.message || issue.code || String(issue));
+        console.log(`${ts()} blocked by QA: ${issues.join(", ")}`);
+        await supaPatch(`articles?id=eq.${a.id}`, {
+          status: "qa_failed",
+          qa_issues: plan.qa.issues,
+          last_qa_at: new Date().toISOString(),
+          last_error: issues.join("; ").slice(0, 500),
+          last_error_at: new Date().toISOString(),
+          repair_status: "needs_repair",
+        }).catch(() => {});
+        await markKeywordForArticle({ ...a, status: "qa_failed" });
+        continue;
+      }
+
+      const htmlIssues = validateRenderedHtml(html, a.title);
+      if (htmlIssues.length > 0) {
+        failed++;
+        console.log(`${ts()} blocked by HTML validator: ${htmlIssues.join(", ")}`);
+        await supaPatch(`articles?id=eq.${a.id}`, {
+          status: "qa_failed",
+          qa_issues: htmlIssues.map((message) => ({ code: "html_validator", message })),
+          last_qa_at: new Date().toISOString(),
+          last_error: htmlIssues.join("; ").slice(0, 500),
+          last_error_at: new Date().toISOString(),
+          repair_status: "needs_repair",
+        }).catch(() => {});
+        await markKeywordForArticle({ ...a, status: "qa_failed" });
+        continue;
+      }
+
+      const existingByKey = await supaGet(
+        `articles?idempotency_key=eq.${encodeURIComponent(plan.idempotencyKey)}&select=id,wp_post_id,wp_url&limit=1`
+      ).catch(() => []);
+      if (Array.isArray(existingByKey) && existingByKey.length > 0 && existingByKey[0].wp_post_id) {
+        const existingKey = existingByKey[0];
+        console.log(`${ts()} idempotent match (wp_post_id=${existingKey.wp_post_id}) - linking`);
+        await supaPatch(`articles?id=eq.${a.id}`, {
+          status: "published",
+          wp_post_id: existingKey.wp_post_id,
+          wp_url: existingKey.wp_url,
+          idempotency_key: plan.idempotencyKey,
+          published_at: new Date().toISOString(),
+        });
+        await markKeywordForArticle({
+          ...a,
+          status: "published",
+          wp_post_id: existingKey.wp_post_id,
+          wp_url: existingKey.wp_url,
+        });
+        published++;
         continue;
       }
 
@@ -195,7 +335,14 @@ function mdToHtml(md) {
           status: "published",
           wp_post_id: e.id,
           wp_url: e.link,
+          idempotency_key: plan.idempotencyKey,
           published_at: new Date().toISOString(),
+        });
+        await markKeywordForArticle({
+          ...a,
+          status: "published",
+          wp_post_id: e.id,
+          wp_url: e.link,
         });
         published++;
         continue;
@@ -208,14 +355,36 @@ function mdToHtml(md) {
         content: html,
         status: "publish",
         categories: catId ? [catId] : [],
+        meta: {
+          _yoast_wpseo_metadesc: a.meta_description || "",
+          _pipeline_lang: language,
+        },
       });
+
+      const schemas = buildSchemas({ ...a, language, content_markdown: md }, {
+        url: post.link,
+        categorySlug: NICHE_TO_CATEGORY_SLUG[nicheSlug],
+      });
+      if (schemas.length > 0) {
+        html += renderSchemaBlock(schemas);
+        await wpReq("POST", `posts/${post.id}`, { content: html });
+      }
 
       await supaPatch(`articles?id=eq.${a.id}`, {
         status: "published",
         wp_post_id: post.id,
         wp_url: post.link,
+        idempotency_key: plan.idempotencyKey,
         published_at: new Date().toISOString(),
+        quality_score: a.quality_score || null,
       });
+      await markKeywordForArticle({
+        ...a,
+        status: "published",
+        wp_post_id: post.id,
+        wp_url: post.link,
+      });
+      submitIndexNow(post.link).catch(() => {});
 
       published++;
       console.log(`${ts()} ✅ published #${post.id} in ${((Date.now() - t0) / 1000).toFixed(1)}s — ${post.link}`);
@@ -240,5 +409,5 @@ function mdToHtml(md) {
   }
 })().catch((e) => {
   console.error("\n❌ FATAL:", e.message);
-  process.exit(1);
+  process.exitCode = 1;
 });

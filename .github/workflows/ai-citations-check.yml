@@ -70,7 +70,7 @@ jobs:
             echo "   Get a key at: https://perplexity.ai/settings/api"
             exit 1
           fi
-          ARGS="--limit $LIMIT"
-          if [ "$DRY_RUN" != "true" ]; then ARGS="$ARGS --go"; fi
-          echo "Running: node scripts/check-ai-citations.js $ARGS"
-          node scripts/check-ai-citations.js $ARGS
+          ARGS=(--limit "$LIMIT")
+          if [ "$DRY_RUN" != "true" ]; then ARGS+=(--go); fi
+          echo "Running: node scripts/check-ai-citations.js ${ARGS[*]}"
+          node scripts/check-ai-citations.js "${ARGS[@]}"

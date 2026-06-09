@@ -36,7 +36,7 @@ try {
 const env = loadEnv();
 
 const argv = process.argv.slice(2);
-const DRY_RUN = argv.includes("--dry-run");
+const DRY_RUN = !(argv.includes("--go") || argv.includes("--fix") || argv.includes("--apply") || argv.includes("--confirm"));
 const FORCE = argv.includes("--force");
 const limitIdx = argv.indexOf("--limit");
 const LIMIT = limitIdx >= 0 ? Math.max(1, parseInt(argv[limitIdx + 1], 10) || 0) : 0;

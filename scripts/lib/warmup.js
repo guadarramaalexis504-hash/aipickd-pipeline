@@ -40,13 +40,15 @@ async function warmUp({
         if (log) console.log(`   🔥 warm-up: site responsive in ${ms}ms (attempt ${i + 1})`);
         return { warm: true, attempts: i + 1, ms };
       }
-      if (log) console.log(`   ⏳ warm-up: attempt ${i + 1} slow/non-200 (${ms}ms, status ${res.status})`);
+      if (log)
+        console.log(`   ⏳ warm-up: attempt ${i + 1} slow/non-200 (${ms}ms, status ${res.status})`);
     } catch (e) {
       if (log) console.log(`   ⏳ warm-up: attempt ${i + 1} cold (${e.message.slice(0, 50)})`);
     }
     if (i < attempts - 1) await new Promise((r) => setTimeout(r, gapMs));
   }
-  if (log) console.log(`   ⚠️  warm-up: site still cold after ${attempts} attempts — proceeding anyway`);
+  if (log)
+    console.log(`   ⚠️  warm-up: site still cold after ${attempts} attempts — proceeding anyway`);
   return { warm: false, attempts };
 }
 

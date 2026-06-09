@@ -72,12 +72,12 @@ jobs:
             echo "   Get one free at console.cloud.google.com → APIs → Chrome UX Report API"
             exit 1
           fi
-          ARGS=""
-          if [ "$DRY_RUN" != "true" ]; then ARGS="--go"; fi
+          ARGS=()
+          if [ "$DRY_RUN" != "true" ]; then ARGS+=(--go); fi
           if [ -n "$URL_INPUT" ]; then
-            ARGS="$ARGS --url $URL_INPUT"
+            ARGS+=(--url "$URL_INPUT")
           else
-            ARGS="$ARGS --limit $LIMIT"
+            ARGS+=(--limit "$LIMIT")
           fi
-          echo "Running: node scripts/check-cwv.js $ARGS"
-          node scripts/check-cwv.js $ARGS
+          echo "Running: node scripts/check-cwv.js ${ARGS[*]}"
+          node scripts/check-cwv.js "${ARGS[@]}"

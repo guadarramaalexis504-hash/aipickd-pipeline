@@ -23,6 +23,8 @@
 "use strict";
 
 const { loadEnv } = require("./lib/env");
+const { buildLocalizedCta } = require("./lib/cta");
+const { normalizeLanguage } = require("./lib/spanish-gate");
 const env = loadEnv();
 
 const {
@@ -213,12 +215,8 @@ function injectReadingTime(html, wordCount) {
 /**
  * Build the CTA HTML block.
  */
-function buildCta(brand, baseUrl, slug) {
-  const utmUrl = `${baseUrl}?utm_source=aipickd&utm_medium=cta&utm_campaign=${slug}`;
-  return `<div class="aipickd-cta">
-  <p><strong>Ready to get started?</strong> Try ${brand} free and see if it fits your workflow.</p>
-  <a href="${utmUrl}" rel="nofollow sponsored" target="_blank" class="aipickd-btn">Try ${brand} Free →</a>
-</div>`;
+function buildCta(brand, baseUrl, slug, language = "en") {
+  return buildLocalizedCta({ brand, baseUrl, slug, language });
 }
 
 /**
@@ -242,11 +240,11 @@ function findMentionedAffiliate(html, affiliates) {
  *   - At 80% through the content (character-count based)
  * Returns null if CTA already exists.
  */
-function injectCta(html, brand, baseUrl, slug) {
+function injectCta(html, brand, baseUrl, slug, language = "en") {
   if (html.includes('class="aipickd-cta"')) return null;
   if (html.includes("class='aipickd-cta'")) return null;
 
-  const ctaBlock = buildCta(brand, baseUrl, slug);
+  const ctaBlock = buildCta(brand, baseUrl, slug, language);
 
   // Find last </ul>
   const lastUlIdx = html.lastIndexOf("</ul>");
@@ -335,6 +333,16 @@ async function discordAlert(message) {
   }
 
   // ── 4. Process each post ────────────────────────────────────────────────────
+  let languageBySlug = new Map();
+  try {
+    const articleRows = await supa("GET", "articles?status=eq.published&select=slug,language");
+    languageBySlug = new Map(
+      (Array.isArray(articleRows) ? articleRows : []).map((article) => [article.slug, normalizeLanguage(article.language)])
+    );
+  } catch (e) {
+    console.warn(`Could not load article languages; defaulting CTA language to English: ${e.message.slice(0, 120)}`);
+  }
+
   const stats = {
     total:         wpPosts.length,
     readingAdded:  0,
@@ -349,6 +357,7 @@ async function discordAlert(message) {
   for (const post of wpPosts) {
     const postId = post.id;
     const slug   = post.slug || String(postId);
+    const language = normalizeLanguage(languageBySlug.get(slug));
 
     // WP REST API with context=edit gives raw content in post.content.raw
     // rendered is the HTML after shortcode/block processing
@@ -385,7 +394,7 @@ async function discordAlert(message) {
     } else if (affiliates.length > 0) {
       const match = findMentionedAffiliate(html, affiliates);
       if (match) {
-        const injected = injectCta(html, match.brand, match.base_url, slug);
+        const injected = injectCta(html, match.brand, match.base_url, slug, language);
         if (injected !== null) {
           html    = injected;
           changed = true;

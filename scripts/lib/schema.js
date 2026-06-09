@@ -51,6 +51,14 @@ const NICHE_TO_CATEGORY_SLUG = {
   "ai-hosting": "ai-infrastructure",
 };
 
+function schemaLanguage(article = {}) {
+  return String(article.language || "en")
+    .toLowerCase()
+    .trim() === "es"
+    ? "es"
+    : "en-US";
+}
+
 // ──────────────────────────────────────────────────────────────────
 // Extractors
 // ──────────────────────────────────────────────────────────────────
@@ -69,8 +77,14 @@ function extractFAQs(md) {
   const headingPattern = /^###\s+(.+?)\n([\s\S]*?)(?=^###\s+|$)/gm;
   let m;
   while ((m = headingPattern.exec(faqBlock)) !== null) {
-    const q = m[1].trim().replace(/^\*\*|\*\*$/g, "").replace(/^Q:\s*/i, "");
-    const a = m[2].trim().replace(/^\*\*A:\*\*\s*/i, "").replace(/^A:\s*/i, "");
+    const q = m[1]
+      .trim()
+      .replace(/^\*\*|\*\*$/g, "")
+      .replace(/^Q:\s*/i, "");
+    const a = m[2]
+      .trim()
+      .replace(/^\*\*A:\*\*\s*/i, "")
+      .replace(/^A:\s*/i, "");
     if (q && a && q.length < 200 && a.length > 20) {
       qas.push({ q, a: a.slice(0, 600) });
     }
@@ -92,7 +106,11 @@ function extractHowToSteps(md) {
   const heads = [];
   let h;
   while ((h = headingRe.exec(md)) !== null) {
-    heads.push({ text: h[1].replace(/\*\*/g, "").trim(), bodyStart: headingRe.lastIndex, index: h.index });
+    heads.push({
+      text: h[1].replace(/\*\*/g, "").trim(),
+      bodyStart: headingRe.lastIndex,
+      index: h.index,
+    });
   }
 
   // Require the explicit word "Step N" — bare "1." headings are ambiguous
@@ -109,10 +127,10 @@ function extractHowToSteps(md) {
     const bodyEnd = i + 1 < heads.length ? heads[i + 1].index : md.length;
     const text = md
       .slice(heads[i].bodyStart, bodyEnd)
-      .replace(/```[\s\S]*?```/g, " ")        // strip code fences
-      .replace(/!\[[^\]]*\]\([^)]*\)/g, " ")   // strip images
+      .replace(/```[\s\S]*?```/g, " ") // strip code fences
+      .replace(/!\[[^\]]*\]\([^)]*\)/g, " ") // strip images
       .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1") // links → link text
-      .replace(/[#*_`>]/g, "")                  // strip md punctuation
+      .replace(/[#*_`>]/g, "") // strip md punctuation
       .replace(/\s+/g, " ")
       .trim()
       .slice(0, 320);
@@ -201,7 +219,7 @@ function buildSchemas(article, opts = {}) {
     dateModified,
     mainEntityOfPage: { "@type": "WebPage", "@id": url },
     isAccessibleForFree: true,
-    inLanguage: "en-US",
+    inLanguage: schemaLanguage(article),
     wordCount,
     author: { "@type": "Organization", name: ORG_NAME, url: SITE },
     publisher: { "@type": "Organization", name: ORG_NAME, url: SITE },
@@ -327,6 +345,7 @@ module.exports = {
   SITE,
   CATEGORY_NAMES,
   NICHE_TO_CATEGORY_SLUG,
+  schemaLanguage,
   extractFAQs,
   extractHowToSteps,
   deriveRating,

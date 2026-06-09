@@ -49,7 +49,7 @@ for (const [k, v] of Object.entries({ WP_USERNAME, WP_ADMIN_PASSWORD, SUPABASE_U
 
 // ─── CLI args ─────────────────────────────────────────────────────────────────
 const args    = process.argv.slice(2);
-const DRY_RUN = args.includes("--dry-run");
+const DRY_RUN = !(args.includes("--go") || args.includes("--fix") || args.includes("--apply") || args.includes("--confirm"));
 const MODE    = DRY_RUN ? "dry-run" : "fix";
 
 const WP_BASE = "https://aipickd.com/wp-json/wp/v2";

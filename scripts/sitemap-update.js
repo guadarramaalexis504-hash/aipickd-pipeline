@@ -31,7 +31,12 @@ try {
 } catch {}
 
 const SAVE = process.argv.includes('--save');
-const DRY_RUN = process.argv.includes('--dry-run');
+const DRY_RUN = !(
+  process.argv.includes("--go") ||
+  process.argv.includes("--fix") ||
+  process.argv.includes("--apply") ||
+  process.argv.includes("--confirm")
+);
 const SITE_URL = 'https://aipickd.com';
 const SITEMAP_URL = `${SITE_URL}/sitemap.xml`; // WordPress auto-generates this
 
