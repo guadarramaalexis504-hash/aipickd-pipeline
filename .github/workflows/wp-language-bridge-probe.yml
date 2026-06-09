@@ -1,0 +1,48 @@
+name: WordPress Language Bridge Probe
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_temp_draft:
+        description: "Type TEMP_DRAFT to create and delete one temporary draft"
+        required: true
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wp-language-bridge-probe
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    name: Probe Spanish language bridge
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Require explicit temporary draft confirmation
+        env:
+          CONFIRM_TEMP_DRAFT: ${{ github.event.inputs.confirm_temp_draft }}
+        run: |
+          if [ "$CONFIRM_TEMP_DRAFT" != "TEMP_DRAFT" ]; then
+            echo "Refusing to run: confirm_temp_draft must be TEMP_DRAFT."
+            exit 1
+          fi
+
+      - name: Run bridge probe with one temporary draft
+        env:
+          WP_USERNAME: ${{ secrets.WP_USERNAME }}
+          WP_ADMIN_PASSWORD: ${{ secrets.WP_ADMIN_PASSWORD }}
+        run: node scripts/wp-language-bridge-probe.js --go
