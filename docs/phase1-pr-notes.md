@@ -14,11 +14,11 @@ Manual PR URL:
 https://github.com/guadarramaalexis504-hash/aipickd-pipeline/pull/new/codex/phase1-spanish-pipeline-safety
 ```
 
-The GitHub connector could compare the branch but could not create the PR because the integration returned `403 Resource not accessible by integration`. Local `gh` is not authenticated. The branch is pushed and compares cleanly against `main` with 2 commits ahead and 0 behind.
+The GitHub connector could compare the branch but could not create the PR because the integration returned `403 Resource not accessible by integration`. Local `gh` is not authenticated. The branch is pushed and compares cleanly against `main`.
 
 Local Linux validation was not available on this Windows machine because WSL, Docker, Podman, and Bash are not installed. Re-run `npm run validate` in GitHub Actions or another Linux host before marking this ready.
 
-Production dry-runs that require Supabase or WordPress credentials are blocked locally until these env vars are available: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `WP_USERNAME`, and `WP_ADMIN_PASSWORD`. No data/content writes were performed while preparing this PR.
+Production report-only checks that only need Supabase reads can run locally with a publishable Supabase key. WordPress authenticated checks still require `WP_USERNAME` and `WP_ADMIN_PASSWORD`. No content writes were performed while preparing this PR.
 
 Read-only Supabase MCP audit found the expected Spanish failure case and additional state drift:
 
@@ -36,6 +36,8 @@ Apply migrations in this order:
 3. `20260609001309_phase1_indexes.sql`
 4. `20260609001343_phase1_soft_constraints.sql`
 5. `20260609001422_phase1_backfill_reconciliation_helpers.sql`
+
+These migrations were applied to the `aipickd` Supabase project via MCP on June 9, 2026. The MCP initially recorded application-time versions, then the migration history was repaired to the repository timestamps above so future `supabase db push` runs stay aligned.
 
 All migrations use idempotent DDL where possible. Constraints are `NOT VALID` so existing production drift does not block deployment. Internal observability tables have RLS enabled and public client roles revoked.
 
@@ -62,9 +64,9 @@ If using a linked project profile, run the same command from the repository root
 1. `node scripts/check-schema-drift.js` passes.
 2. `node scripts/report-qa-failures.js` identifies the Spanish failed article.
 3. `node scripts/release-es-keywords.js --limit 1 --dry-run` shows the exact `es_hold` row and writes nothing.
-4. `node scripts/publish-pending-drafts.js --limit 1` writes nothing and reports preserved `language`, planned `_pipeline_lang`, idempotency, QA, schema, and IndexNow behavior.
-5. `node scripts/wp-language-bridge-probe.js` passes read-only, or Spanish release/publish remains blocked. If read-only cannot verify safely, only run `node scripts/wp-language-bridge-probe.js --go` with explicit approval; it creates a temporary draft and attempts cleanup.
-6. No production writes happened except explicitly approved migrations and, optionally, one single-keyword Spanish smoke test.
+4. `node scripts/publish-pending-drafts.js --limit 1` writes nothing. If no pending drafts exist, it reports `nothing to do`; otherwise it reports preserved `language`, planned `_pipeline_lang`, idempotency, QA, schema, and IndexNow behavior.
+5. `node scripts/wp-language-bridge-probe.js` currently reports a blocker in read-only mode because no public Spanish/Polylang evidence was found. Spanish release/publish remains blocked. Only run `node scripts/wp-language-bridge-probe.js --go` with explicit approval and valid WP credentials; it creates a temporary draft and attempts cleanup.
+6. No production content writes happened except the explicitly approved Phase 1 migrations and migration-history alignment. No Spanish keyword smoke test has been run.
 
 ## Explicit Write Gates
 
