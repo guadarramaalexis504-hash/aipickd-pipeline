@@ -4,6 +4,29 @@
 
 Phase 1 is intentionally narrow. It fixes schema drift, Spanish gating, traceable QA, consistent keyword/article states, and safe publisher recovery. Larger module extraction and mass content repair are Phase 2+ work.
 
+## PR Handoff
+
+Branch: `codex/phase1-spanish-pipeline-safety`
+
+Manual PR URL:
+
+```text
+https://github.com/guadarramaalexis504-hash/aipickd-pipeline/pull/new/codex/phase1-spanish-pipeline-safety
+```
+
+The GitHub connector could compare the branch but could not create the PR because the integration returned `403 Resource not accessible by integration`. Local `gh` is not authenticated. The branch is pushed and compares cleanly against `main` with 2 commits ahead and 0 behind.
+
+Local Linux validation was not available on this Windows machine because WSL, Docker, Podman, and Bash are not installed. Re-run `npm run validate` in GitHub Actions or another Linux host before marking this ready.
+
+Production dry-runs that require Supabase or WordPress credentials are blocked locally until these env vars are available: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `WP_USERNAME`, and `WP_ADMIN_PASSWORD`. No data/content writes were performed while preparing this PR.
+
+Read-only Supabase MCP audit found the expected Spanish failure case and additional state drift:
+
+- Spanish failed article: `cfda0e96-2449-47d8-875b-c7ec6b11d1c9`, slug `mejor-ia-para-crear-imagenes-2026`, status `qa_failed`, no `wp_post_id`, no `wp_url`.
+- Associated keyword: `b5da6aee-3b61-4572-a4c7-f9942e469e61`, keyword `mejor ia para crear imagenes`, currently incorrectly `published`.
+- First Spanish release candidate in `es_hold`: `ff36854c-ed82-4066-a737-3063869d0c8b`, keyword `mejor ia para hacer tareas`, priority `1000`, search volume `2400`.
+- Inconsistent published keyword states found read-only: 8 EN archived articles, 9 EN QA-failed articles, 1 ES QA-failed article.
+
 ## Migrations
 
 Apply migrations in this order:
