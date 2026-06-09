@@ -59,10 +59,20 @@ ALTER TABLE public.publish_attempts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.internal_links ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.indexing_status ENABLE ROW LEVEL SECURITY;
 
-REVOKE ALL ON public.pipeline_runs FROM anon, authenticated;
-REVOKE ALL ON public.publish_attempts FROM anon, authenticated;
-REVOKE ALL ON public.internal_links FROM anon, authenticated;
-REVOKE ALL ON public.indexing_status FROM anon, authenticated;
+DO $$
+DECLARE
+  role_name TEXT;
+BEGIN
+  FOREACH role_name IN ARRAY ARRAY['anon', 'authenticated']
+  LOOP
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = role_name) THEN
+      EXECUTE format(
+        'REVOKE ALL ON TABLE public.pipeline_runs, public.publish_attempts, public.internal_links, public.indexing_status FROM %I',
+        role_name
+      );
+    END IF;
+  END LOOP;
+END $$;
 
 COMMENT ON TABLE public.pipeline_runs IS
   'Internal automation run summaries. Server-side service role only.';
