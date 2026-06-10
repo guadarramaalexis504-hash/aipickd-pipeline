@@ -2,10 +2,14 @@ const { test } = require("node:test");
 const assert = require("node:assert/strict");
 
 const {
+  buildReleaseKeywordEndpoint,
   parseReleaseOptions,
   resolveBridgeVerification,
   selectKeywordsForRelease,
+  validatePipelineConfig,
 } = require("../scripts/release-es-keywords");
+
+const studyComparisonKeywordId = "58a4cb28-0a04-4c19-aa1d-0e676335301e";
 
 const keywordRows = [
   {
@@ -23,6 +27,14 @@ const keywordRows = [
     status: "es_hold",
     priority: 900,
     search_volume: 1000,
+  },
+  {
+    id: studyComparisonKeywordId,
+    keyword: "chatgpt vs claude vs gemini para estudiar",
+    language: "es",
+    status: "es_hold",
+    priority: 100,
+    search_volume: 880,
   },
 ];
 
@@ -73,4 +85,36 @@ test("release-es bridge: explicit confirmation evidence also caps release to one
   assert.equal(bridge.verified, true);
   assert.match(bridge.source, /explicit --bridge-verified/i);
   assert.equal(selected.length, 1);
+});
+
+test("release-es can target one explicit Spanish smoke keyword", () => {
+  const options = parseReleaseOptions(["--limit", "5", "--keyword-id", studyComparisonKeywordId]);
+  const selected = selectKeywordsForRelease(keywordRows, options);
+  const endpoint = buildReleaseKeywordEndpoint(options);
+
+  assert.equal(options.keywordId, studyComparisonKeywordId);
+  assert.equal(options.effectiveLimit, 1);
+  assert.deepEqual(
+    selected.map((keyword) => keyword.id),
+    [studyComparisonKeywordId]
+  );
+  assert.match(endpoint, new RegExp(`id=eq\\.${studyComparisonKeywordId}`));
+  assert.match(endpoint, /status=eq\.es_hold/);
+  assert.match(endpoint, /language=eq\.es/);
+  assert.match(endpoint, /assigned_article_id=is\.null/);
+});
+
+test("release-es rejects invalid explicit keyword ids", () => {
+  assert.throws(() => parseReleaseOptions(["--keyword-id", "not-a-uuid"]), /valid UUID/);
+});
+
+test("release-es blocks writes when Spanish pipeline is globally enabled", () => {
+  assert.deepEqual(validatePipelineConfig({ spanish_pipeline_enabled: false }), {
+    ok: true,
+    reason: "pipeline_config.spanish_pipeline_enabled=false",
+  });
+  assert.deepEqual(validatePipelineConfig({ spanish_pipeline_enabled: true }), {
+    ok: false,
+    reason: "pipeline_config.spanish_pipeline_enabled must remain false",
+  });
 });

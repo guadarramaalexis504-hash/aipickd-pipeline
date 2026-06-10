@@ -8,6 +8,7 @@ const path = require("node:path");
 
 const MAX_RELEASE_LIMIT = 1;
 const BRIDGE_CONFIRMATION = "WP_LANGUAGE_BRIDGE_VERIFIED";
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function readOption(argv, name, fallback = null) {
   const exactIdx = argv.indexOf(name);
@@ -27,12 +28,22 @@ function normalizeBridgeRunId(value) {
   return /^\d+$/.test(runId) ? runId : null;
 }
 
+function normalizeKeywordId(value) {
+  if (!value) return null;
+  const keywordId = String(value).trim();
+  if (!UUID_RE.test(keywordId)) {
+    throw new Error("--keyword-id must be a valid UUID.");
+  }
+  return keywordId;
+}
+
 function parseReleaseOptions(inputArgv = process.argv.slice(2)) {
   const argv = [...inputArgv];
   const requestedLimit = readIntFlag(argv, "--limit", 1);
   const bridgeRunId = normalizeBridgeRunId(readOption(argv, "--bridge-run-id", null));
   const bridgeConfirmation = readOption(argv, "--confirm-bridge", null);
   const bridgeVerified = argv.includes("--bridge-verified");
+  const keywordId = normalizeKeywordId(readOption(argv, "--keyword-id", null));
 
   return {
     argv,
@@ -42,6 +53,7 @@ function parseReleaseOptions(inputArgv = process.argv.slice(2)) {
     bridgeRunId,
     bridgeVerified,
     bridgeConfirmation,
+    keywordId,
   };
 }
 
@@ -92,7 +104,22 @@ function resolveBridgeVerification(options, { readOnlyVerified = false } = {}) {
 }
 
 function selectKeywordsForRelease(keywords, options) {
+  if (options.keywordId) {
+    return keywords
+      .filter((keyword) => keyword.id === options.keywordId)
+      .slice(0, MAX_RELEASE_LIMIT);
+  }
   return keywords.slice(0, options.effectiveLimit);
+}
+
+function buildReleaseKeywordEndpoint(options) {
+  const select = "select=id,keyword,language,status,priority,search_volume,assigned_article_id";
+  if (options.keywordId) {
+    return `keywords?id=eq.${encodeURIComponent(
+      options.keywordId
+    )}&status=eq.es_hold&language=eq.es&assigned_article_id=is.null&limit=1&${select}`;
+  }
+  return `keywords?status=eq.es_hold&language=eq.es&assigned_article_id=is.null&order=priority.desc,search_volume.desc&limit=${options.effectiveLimit}&${select}`;
 }
 
 function buildReleaseAction(keyword) {
@@ -104,6 +131,16 @@ function buildReleaseAction(keyword) {
     to: "queued",
     assigned_article_id: keyword.assigned_article_id || null,
   };
+}
+
+function validatePipelineConfig(config) {
+  if (!config) {
+    return { ok: false, reason: "pipeline_config row missing" };
+  }
+  if (config.spanish_pipeline_enabled !== false) {
+    return { ok: false, reason: "pipeline_config.spanish_pipeline_enabled must remain false" };
+  }
+  return { ok: true, reason: "pipeline_config.spanish_pipeline_enabled=false" };
 }
 
 function runWordPressLanguageBridgeProbe() {
@@ -123,20 +160,26 @@ function runWordPressLanguageBridgeProbe() {
 async function main() {
   const options = parseReleaseOptions(process.argv.slice(2));
 
-  const rows = await supa(
-    "GET",
-    `keywords?status=eq.es_hold&order=priority.desc,search_volume.desc&limit=${options.effectiveLimit}&select=id,keyword,language,status,priority,search_volume,assigned_article_id`
-  );
+  const rows = await supa("GET", buildReleaseKeywordEndpoint(options));
   const keywords = selectKeywordsForRelease(Array.isArray(rows) ? rows : [], options);
   console.log(
     `release-es-keywords mode=${options.go ? "WRITE --go" : "REPORT ONLY"} requested_limit=${options.requestedLimit} effective_limit=${options.effectiveLimit}`
   );
+  if (options.keywordId) {
+    console.log(`Target keyword_id: ${options.keywordId}`);
+  }
   console.log("Phase 1 guardrail: this script can release at most 1 Spanish keyword per run.");
   console.log("spanish_pipeline_enabled is not changed by this script.");
   console.log("This script does not publish articles.");
 
   if (keywords.length === 0) {
-    console.log("No es_hold keywords found.");
+    if (options.keywordId) {
+      console.log(
+        "No matching es_hold Spanish keyword found for the requested keyword_id with assigned_article_id=null."
+      );
+    } else {
+      console.log("No es_hold keywords found.");
+    }
     return 0;
   }
 
@@ -152,6 +195,18 @@ async function main() {
       "No writes performed. Re-run with --go and bridge evidence to release one keyword."
     );
     return 0;
+  }
+
+  const configRows = await supa(
+    "GET",
+    "pipeline_config?id=eq.00000000-0000-0000-0000-000000000001&select=spanish_pipeline_enabled"
+  );
+  const config = Array.isArray(configRows) ? configRows[0] : null;
+  const configValidation = validatePipelineConfig(config);
+  console.log(`Spanish pipeline gate: ${configValidation.reason}`);
+  if (!configValidation.ok) {
+    console.log("No writes performed. Spanish release remains blocked.");
+    return 4;
   }
 
   const probe = runWordPressLanguageBridgeProbe();
@@ -194,8 +249,10 @@ if (require.main === module) {
 module.exports = {
   BRIDGE_CONFIRMATION,
   MAX_RELEASE_LIMIT,
+  buildReleaseKeywordEndpoint,
   buildReleaseAction,
   parseReleaseOptions,
   resolveBridgeVerification,
   selectKeywordsForRelease,
+  validatePipelineConfig,
 };
