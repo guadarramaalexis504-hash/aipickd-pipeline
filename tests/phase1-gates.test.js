@@ -272,8 +272,146 @@ test("QA blocks Spanish listicles when title count exceeds developed tools", () 
   const mismatchIssue = qa.issues.find((issue) => issue.code === "list_count_mismatch");
   assert.equal(qa.pass, false);
   assert.ok(mismatchIssue, "QA should block list count mismatch");
-  assert.match(mismatchIssue.message, /expected 7/i);
-  assert.match(mismatchIssue.message, /found 5/i);
+  assert.equal(mismatchIssue.message, "title promises 7 tools but only 5 were developed");
+});
+
+test("QA counts only developed Spanish tool sections, not nested detail headings", () => {
+  const articleBody = [
+    "# 7 Mejores IAs para Hacer Tareas que Destacan en 2026",
+    "",
+    "Esta guia compara opciones para elegir la mejor ia para hacer tareas segun el caso.",
+    "",
+    "## Puntos clave:",
+    "Compara idioma, precio y tipo de tarea.",
+    "## Resumen rápido: Las 3 mejores según uso",
+    "Una seleccion editorial breve.",
+    "## ¿Cómo seleccionamos estas herramientas?",
+    "Evaluamos criterios publicos y casos de uso tipicos.",
+    "",
+    "## 1. ChatGPT-4: Redaccion y solucion de problemas",
+    "### Para que sirve?",
+    "Ayuda a explicar conceptos, resumir textos y crear borradores.",
+    "### Precio:",
+    "Tiene plan gratuito y planes de pago.",
+    "### Pros:",
+    "Responde rapido y cubre muchos tipos de tareas.",
+    "### Contras:",
+    "Requiere revisar datos sensibles.",
+    "### Mejor caso de uso:",
+    "Borradores, explicaciones y organizacion de ideas.",
+    "",
+    "## 2. Notion AI: Organizacion de notas y proyectos",
+    "### Para que sirve?",
+    "Resume notas, transforma listas y ordena tareas.",
+    "### Precio:",
+    "Se ofrece como complemento dentro de Notion.",
+    "### Pros:",
+    "Funciona bien si ya usas Notion.",
+    "### Contras:",
+    "Depende de tener la informacion dentro del espacio de trabajo.",
+    "### Mejor caso de uso:",
+    "Convertir notas dispersas en tareas claras.",
+    "",
+    "## 3. Zapier: Automatizar tareas repetitivas",
+    "### Para que sirve?",
+    "Conecta apps para mover datos y activar flujos.",
+    "### Precio:",
+    "Incluye plan gratuito limitado y planes de pago.",
+    "### Pros:",
+    "Tiene muchas integraciones.",
+    "### Contras:",
+    "Los flujos avanzados requieren cuidado.",
+    "### Mejor caso de uso:",
+    "Automatizar recordatorios y traspaso de informacion.",
+    "",
+    "## 4. Jasper AI: Redaccion para marketing",
+    "### Para que sirve?",
+    "Genera borradores para campanas y piezas comerciales.",
+    "### Precio:",
+    "Sus planes suelen ser de pago.",
+    "### Pros:",
+    "Tiene plantillas orientadas a marketing.",
+    "### Contras:",
+    "No es la opcion mas barata.",
+    "### Mejor caso de uso:",
+    "Ideas y borradores para contenido comercial.",
+    "",
+    "## 5. Grammarly Premium: Revision y claridad",
+    "### Para que sirve?",
+    "Ayuda a corregir tono, claridad y errores de escritura.",
+    "### Precio:",
+    "Tiene version gratuita y planes premium.",
+    "### Pros:",
+    "Es util para revisar textos finales.",
+    "### Contras:",
+    "No reemplaza una revision humana completa.",
+    "### Mejor caso de uso:",
+    "Pulir entregas, correos y documentos.",
+    "",
+    "## FAQ",
+    "### Cual IA conviene para empezar?",
+    "Empieza por una herramienta general y despues suma automatizacion si la necesitas.",
+  ].join("\n");
+
+  const qa = qualityGate({
+    title: "7 Mejores IAs para Hacer Tareas que Destacan en 2026",
+    content_markdown: articleBody,
+    language: "es",
+    primary_keyword: "mejor ia para hacer tareas",
+    word_count: 1741,
+  });
+
+  const mismatchIssue = qa.issues.find((issue) => issue.code === "list_count_mismatch");
+  assert.equal(qa.pass, false);
+  assert.ok(mismatchIssue, "QA should count only 5 developed tools");
+  assert.equal(mismatchIssue.message, "title promises 7 tools but only 5 were developed");
+});
+
+test("QA listicle count passes when Spanish title promises 7 tools and 7 are developed", () => {
+  const toolSections = [
+    "ChatGPT-4",
+    "Claude",
+    "Gemini",
+    "Microsoft Copilot",
+    "Perplexity",
+    "Notion AI",
+    "Zapier",
+  ].flatMap((tool, index) => [
+    `## ${index + 1}. ${tool}: ayuda concreta para tareas`,
+    "### Para que sirve?",
+    `${tool} ayuda a resolver una tarea especifica dentro de un flujo de estudio o trabajo.`,
+    "### Precio:",
+    "Incluye plan gratuito, prueba o plan de pago segun la plataforma.",
+    "### Pros:",
+    "Tiene un caso de uso claro y facil de explicar.",
+    "### Contras:",
+    "Conviene revisar sus respuestas antes de entregar trabajo final.",
+    "### Mejor caso de uso:",
+    "Usarla cuando necesitas avanzar una tarea concreta sin perder control editorial.",
+  ]);
+
+  const articleBody = [
+    "# 7 Mejores IAs para Hacer Tareas en 2026",
+    "",
+    "Esta guia ayuda a comparar la mejor ia para hacer tareas segun necesidad, presupuesto y contexto.",
+    "",
+    ...toolSections,
+    "",
+    "## FAQ",
+    "### Cual IA conviene para empezar?",
+    "Empieza con una opcion general y compara resultados con una segunda herramienta.",
+  ].join("\n");
+
+  const qa = qualityGate({
+    title: "7 Mejores IAs para Hacer Tareas en 2026",
+    content_markdown: articleBody,
+    language: "es",
+    primary_keyword: "mejor ia para hacer tareas",
+    word_count: 1800,
+  });
+
+  const mismatchIssue = qa.issues.find((issue) => issue.code === "list_count_mismatch");
+  assert.equal(mismatchIssue, undefined);
 });
 
 test("QA blocks stale 2023 references in Spanish 2026 articles", () => {
