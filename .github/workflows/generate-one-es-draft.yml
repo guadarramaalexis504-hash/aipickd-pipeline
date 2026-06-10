@@ -1,0 +1,128 @@
+name: Generate One Spanish Draft
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_generate:
+        description: "Type GENERATE_ONE_ES_DRAFT to generate one Spanish draft"
+        required: true
+        default: ""
+      keyword_id:
+        description: "Released Spanish keyword id to generate"
+        required: true
+        default: "ff36854c-ed82-4066-a737-3063869d0c8b"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aipickd-mutations
+  cancel-in-progress: false
+
+jobs:
+  generate:
+    name: Generate one Spanish draft
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    env:
+      AUTO_PUBLISH: "false"
+      DAILY_BUDGET: "3"
+      MONTHLY_BUDGET: "50"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup AIPickd environment
+        uses: ./.github/actions/setup-env
+        with:
+          supabase-url: ${{ secrets.SUPABASE_URL }}
+          supabase-service-role-key: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          wp-username: ${{ secrets.WP_USERNAME }}
+          wp-admin-password: ${{ secrets.WP_ADMIN_PASSWORD }}
+          discord-webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          discord-webhook-articulos: ${{ secrets.DISCORD_WEBHOOK_ARTICULOS }}
+          discord-webhook-pipeline: ${{ secrets.DISCORD_WEBHOOK_PIPELINE }}
+          discord-webhook-alertas: ${{ secrets.DISCORD_WEBHOOK_ALERTAS }}
+
+      - name: Require main branch
+        run: |
+          if [ "$GITHUB_REF_NAME" != "main" ]; then
+            echo "Refusing to run: this workflow must be dispatched from main."
+            exit 1
+          fi
+
+      - name: Require explicit generation confirmation
+        env:
+          CONFIRM_GENERATE: ${{ github.event.inputs.confirm_generate }}
+        run: |
+          if [ "$CONFIRM_GENERATE" != "GENERATE_ONE_ES_DRAFT" ]; then
+            echo "Refusing to run: confirm_generate must be GENERATE_ONE_ES_DRAFT."
+            exit 1
+          fi
+
+      - name: Require approved keyword id
+        env:
+          KEYWORD_ID: ${{ github.event.inputs.keyword_id }}
+          APPROVED_KEYWORD_ID: ff36854c-ed82-4066-a737-3063869d0c8b
+        run: |
+          if [ "$KEYWORD_ID" != "$APPROVED_KEYWORD_ID" ]; then
+            echo "Refusing to run: keyword_id must be $APPROVED_KEYWORD_ID."
+            exit 1
+          fi
+
+      - name: Preflight Spanish draft generation
+        env:
+          KEYWORD_ID: ${{ github.event.inputs.keyword_id }}
+        run: |
+          node <<'NODE'
+          const { supa } = require("./scripts/lib/clients");
+
+          async function main() {
+            const keywordId = process.env.KEYWORD_ID;
+            const cfgRows = await supa(
+              "GET",
+              "pipeline_config?id=eq.00000000-0000-0000-0000-000000000001&select=paused,spanish_pipeline_enabled"
+            );
+            const cfg = Array.isArray(cfgRows) ? cfgRows[0] : null;
+            if (!cfg) throw new Error("pipeline_config row missing");
+            if (cfg.paused !== false) throw new Error("pipeline_config.paused must be false");
+            if (cfg.spanish_pipeline_enabled !== false) {
+              throw new Error("pipeline_config.spanish_pipeline_enabled must remain false");
+            }
+
+            const keywordRows = await supa(
+              "GET",
+              `keywords?id=eq.${encodeURIComponent(keywordId)}&select=id,keyword,status,language,assigned_article_id`
+            );
+            const keyword = Array.isArray(keywordRows) ? keywordRows[0] : null;
+            if (!keyword) throw new Error(`keyword ${keywordId} not found`);
+            if (keyword.status !== "queued") throw new Error(`keyword status must be queued, got ${keyword.status}`);
+            if (keyword.language !== "es") throw new Error(`keyword language must be es, got ${keyword.language}`);
+            if (keyword.assigned_article_id !== null) {
+              throw new Error(`keyword assigned_article_id must be null, got ${keyword.assigned_article_id}`);
+            }
+
+            console.log(
+              `Preflight OK: keyword ${keyword.id} (${keyword.keyword}) status=${keyword.status} language=${keyword.language} assigned_article_id=null`
+            );
+            console.log("AUTO_PUBLISH=false; the next step runs --no-pub and will not publish to WordPress.");
+          }
+
+          main().catch((err) => {
+            console.error(`Preflight failed: ${err.message}`);
+            process.exit(1);
+          });
+          NODE
+
+      - name: Generate one Spanish draft
+        env:
+          KEYWORD_ID: ${{ github.event.inputs.keyword_id }}
+        run: |
+          echo "Running controlled ES draft generation: max 1 keyword, --include-es, --no-pub, exact keyword id."
+          node scripts/run-pipeline.js --gen 1 --include-es --no-pub --only-keyword-id "$KEYWORD_ID"
