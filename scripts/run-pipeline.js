@@ -39,6 +39,7 @@ const {
 const {
   AI_TELL_PHRASES,
   cleanupAiTellPhrases,
+  detectSpanishQualityIssues,
   detectAiTellPhrases,
   formatAiTellIssue,
   formatToolPlaceholderIssue,
@@ -521,7 +522,7 @@ async function generateOne() {
   const LANG = normalizeLanguage(kw.language);
   const ES = LANG === "es";
   GEN_LANG_DIRECTIVE = ES
-    ? `🌎 IDIOMA OBLIGATORIO — Escribe ABSOLUTAMENTE TODO en ESPAÑOL DE MÉXICO natural (usa "tú", nunca "usted"), para una audiencia de Latinoamérica. Título, slug, encabezados, cuerpo, tablas, FAQ, "Veredicto rápido", "Puntos clave", cada "Dato clave", y la meta description: TODO en español. JAMÁS en inglés. Suena como un reviewer mexicano que SÍ probó las herramientas en persona. Evita clichés y traducciones literales: "en el mundo actual", "sin duda alguna", "es importante destacar", "en conclusión", "descubre el poder", "lleva tu X al siguiente nivel", "en la era digital", "revoluciona". Los TÍTULOS deben tener gancho (40-60 caracteres, con un número + "2026", ángulo "lo probé/comparé yo"). Ejemplos del estilo: "Probé 7 IAs para crear videos: solo 2 valen la pena", "ChatGPT vs Claude vs Gemini: ¿cuál explica mejor? (2026)", "IA gratis vs de pago: ¿cuándo SÍ vale pagar? (2026)". NUNCA títulos fríos como "Mejores herramientas IA 2026".\n\n`
+    ? `IDIOMA OBLIGATORIO - Escribe ABSOLUTAMENTE TODO en ESPANOL DE MEXICO natural (usa "tu", nunca "usted"), para una audiencia de Latinoamerica. Titulo, slug, encabezados, cuerpo, tablas, FAQ, "Veredicto rapido", "Puntos clave", cada "Dato clave", y la meta description: TODO en espanol. JAMAS uses headings o etiquetas en ingles como "Quick Picks", "Key fact", "Final Verdict", "Pros and Cons", "Pricing", "Features", "Overview", "Best for" o "Use cases". No afirmes que "probamos", "probe", "probadas" o "en proyectos reales" si no hay evidencia real; usa "evaluamos criterios publicos y casos de uso tipicos". Para listicles ES: si el titulo promete 7 herramientas, desarrolla exactamente 7 herramientas reales con nombre, cada una en su propio H2. Cada herramienta debe incluir para que sirve, ejemplo de tarea, precio aproximado o plan, pros, contras y mejor caso de uso. Prohibido dejar placeholders bracketed como "[Herramienta 1]", "[Producto 1]", "[Nombre]", "[Nombre de la app]" o "[Nombre de IA]". Evita cliches y traducciones literales: "en el mundo actual", "sin duda alguna", "es importante destacar", "en conclusion", "descubre el poder", "lleva tu X al siguiente nivel", "en la era digital", "revoluciona". Los titulos deben tener gancho (40-60 caracteres, con numero + "2026"), pero sin prometer pruebas propias no verificadas. Ejemplos validos: "7 IAs para tareas: cual conviene en 2026", "ChatGPT vs Claude vs Gemini: cual explica mejor (2026)", "IA gratis vs de pago: cuando vale pagar (2026)". NUNCA titulos frios como "Mejores herramientas IA 2026".\n\n`
     : "";
   if (ES) console.log(`${ts()} 🇲🇽 Modo ESPAÑOL activado para este artículo`);
 
@@ -616,6 +617,7 @@ HIGH-CTR FORMULAS by type — pick the PUNCHIEST fit and VARY them (never reuse 
   * alternative:"7 Best X Alternatives in 2026 [Cheaper + Free]"
 BANNED — boring (kills CTR): "Best X 2026", "X Guide", "Everything About X", "Ultimate Guide to X", "A Comprehensive Look at X".
 BANNED — hype clichés (read as AI spam): "elevate", "unlock your potential", "supercharge", "game-changer", "revolutionary", "seamless", "dive into".
+SPANISH-SPECIFIC BANS: For Spanish articles, do NOT use "[Probadas]", "Probé", "Probamos", "We Tested", or "I Tried" unless the input includes real testing evidence. Use "Evaluadas", "Comparadas", or "Opciones reales" instead. Spanish headings must be Spanish-only.
 Good: "7 AI Writing Tools We Tested — Only 3 Actually Work [2026]"  ·  Bad: "Best AI Writing Tools 2026"
 
 Return a JSON object with keys: title (50-60 chars, high-CTR formula as described above), slug (kebab-case with "2026"), meta_description (150-160 chars, MUST follow these CTR rules: start with a benefit/result NOT "In this article" or "Learn about", include primary keyword in first 80 chars, end with curiosity hook or CTA like "See the results" or "Find out which wins", use a number or specific detail when possible. Example: "We tested 7 AI writing tools head-to-head. Here's which one actually delivers for small businesses in 2026."), primary_keyword, lsi_keywords (array of 5-7), target_word_count (must be 3000), article_type, sections (array of AT LEAST 10 objects with: heading, level, bullets array of 4-6 items, word_target number >= 250), faqs (array of 6 question strings), internal_link_ideas (array of strings).`,
@@ -666,7 +668,8 @@ Rules:
 9. ⚠️ MINIMUM 2000 WORDS — this is non-negotiable. Short sections must be expanded with examples.
 10. Cover EVERY section from the outline fully. DO NOT skip sections or write one-liners.
 11. End with a full "## FAQ" section answering all ${(outline.faqs || []).length} questions in detail (each answer min 3 sentences).
-12. NEVER leave generic placeholders such as "Tool A", "Tool B", "Tool C", "[Tool]", "[Nombre de herramienta]", or "Producto A". Use real product names in every heading, table, and recommendation.
+12. NEVER leave generic placeholders such as "Tool A", "Tool B", "Tool C", "[Tool]", "[Nombre de herramienta]", "[Herramienta 1]", "[Producto 1]", "[Nombre]", "[Nombre de la app]", "[Nombre de IA]", or "Producto A". Use real product names in every heading, table, and recommendation.
+12a. For Spanish listicles, do not use English labels like "Quick Picks" or "Key fact"; use Spanish labels only. If the Spanish title promises 7 tools, write exactly 7 real named tools, one H2 per tool, and each tool must include what it does, one task example, approximate price or plan, pros, cons, and best use case.
 13. ⭐ CITATION CAPSULE (GEO/AEO requirement): EVERY H2 section (except FAQ) MUST end with a "Key fact" blockquote — exactly this format:
 
 > **Key fact (as of April 2026):** [One factual, citable sentence with a specific number, date, comparison, or claim that an AI search engine like ChatGPT, Perplexity, or Google AI Overview would quote verbatim. Must be standalone — no pronouns like "this" or "that" referring to context above.]
@@ -756,6 +759,7 @@ STRICT RULES:
 6. Keep all [AFFILIATE:...] tags EXACTLY as-is (don't touch them)
 7. Keep all markdown structure: headings, tables, bullet lists, numbered lists, blockquotes
 8. CRITICAL: Keep "> **Key fact (as of {month year}):** ..." blockquotes EXACTLY as written. These are Citation Capsules — AI search engines extract them verbatim. Do not paraphrase, shorten, or remove them. Every H2 should have one.
+8a. For Spanish articles, translate visible English labels and headings to Spanish. Remove bracket placeholders and first-party testing claims unless the draft includes actual evidence.
 9. MINIMUM output: ${Math.max(polishWords - 50, 1800)} words (you started with ${polishWords} — DO NOT go below this)
 10. Output: the complete revised markdown only — start with # heading, no commentary
 11. DO NOT wrap your output in code fences (\`\`\`markdown ... \`\`\`). Output ONLY raw markdown.`,
@@ -1001,6 +1005,8 @@ function qualityGate(article) {
   const toolPlaceholderIssue = formatToolPlaceholderIssue(md);
   if (toolPlaceholderIssue) issues.push(toolPlaceholderIssue);
 
+  issues.push(...detectSpanishQualityIssues({ ...article, content_markdown: md }));
+
   // Truncation indicators (GPT might truncate output)
   if (md.endsWith("...") || md.endsWith("…")) issues.push("appears truncated");
 
@@ -1087,8 +1093,13 @@ function qualityGate(article) {
   return { pass: issues.length === 0, issues };
 }
 
-function qaIssueCode(message) {
-  const text = String(message || "").toLowerCase();
+function qaIssueMessage(issue) {
+  return typeof issue === "string" ? issue : issue.message || issue.code || "qa_failed";
+}
+
+function qaIssueCode(issue) {
+  if (issue && typeof issue === "object" && issue.code) return issue.code;
+  const text = qaIssueMessage(issue).toLowerCase();
   if (text.includes("too short")) return "too_short";
   if (text.includes("faq")) return "missing_faq";
   if (text.includes("keyword")) return "missing_keyword";
@@ -1096,15 +1107,19 @@ function qaIssueCode(message) {
   if (text.includes("duplicate")) return "duplicate";
   if (text.includes("language")) return "language_mismatch";
   if (text.includes("placeholder")) return "tool_placeholders";
+  if (text.includes("english residual")) return "english_residual";
+  if (text.includes("listicle count mismatch")) return "list_count_mismatch";
+  if (text.includes("stale reference")) return "stale_reference";
+  if (text.includes("unsupported strong claim")) return "unsupported_claim";
   if (text.includes("schema")) return "schema_error";
   return "qa_failed";
 }
 
 function qaIssueObjects(issues, fallbackCode = "qa_failed") {
   return (issues || []).map((issue) => {
-    const message = typeof issue === "string" ? issue : issue.message || issue.code || fallbackCode;
+    const message = qaIssueMessage(issue);
     return {
-      code: issue.code || qaIssueCode(message) || fallbackCode,
+      code: qaIssueCode(issue) || fallbackCode,
       message,
       severity: issue.severity || "blocking",
       repairable: issue.repairable !== false,
@@ -1633,7 +1648,7 @@ async function publishAllDrafts(maxCount = 10) {
     }
     // Minimum Viable Approve: if only issue is "too short" (1000-1099w), auto-approve to avoid stalls
     let qaPass = qa.pass;
-    if (!qa.pass && qa.issues.length === 1 && qa.issues[0].startsWith('too short')) {
+    if (!qa.pass && qa.issues.length === 1 && qaIssueMessage(qa.issues[0]).startsWith("too short")) {
       const wc = article.word_count || 0;
       const qScore = calcQualityScore(wc, []);
       if (wc >= 1000 && qScore >= 50) {
@@ -1643,7 +1658,7 @@ async function publishAllDrafts(maxCount = 10) {
     }
     if (!qaPass) {
       skippedCount++;
-      const issuesSummary = qa.issues.join(", ");
+      const issuesSummary = qa.issues.map(qaIssueMessage).join(", ");
       console.log(`   ⏩ skip "${article.title.slice(0, 50)}": ${issuesSummary}`);
       // Mark as qa_failed so it doesn't clog the queue on future runs
       await supa("PATCH", `articles?id=eq.${article.id}`, {

@@ -189,6 +189,145 @@ test("QA blocks generic tool placeholders before publish", () => {
   assert.equal(placeholderIssue.repairable, true);
 });
 
+test("QA blocks Spanish bracketed product placeholders before publish", () => {
+  const articleBody = [
+    "# 7 Mejores IAs para Hacer Tareas en 2026",
+    "",
+    "## [Herramienta 1]: Zapier",
+    "Zapier ayuda a automatizar tareas administrativas.",
+    "",
+    "## FAQ",
+    "### Cual IA conviene para empezar?",
+    "Empieza comparando precio, idioma, limites y el tipo de tarea que necesitas resolver.",
+  ].join("\n");
+
+  const qa = qualityGate({
+    title: "7 Mejores IAs para Hacer Tareas en 2026",
+    content_markdown: articleBody,
+    language: "es",
+    primary_keyword: "mejor ia para hacer tareas",
+    word_count: 1200,
+  });
+
+  const placeholderIssue = qa.issues.find((issue) => issue.code === "tool_placeholders");
+  assert.equal(qa.pass, false);
+  assert.ok(placeholderIssue, "QA should block bracketed Spanish placeholders");
+  assert.match(placeholderIssue.message, /\[Herramienta 1\]/i);
+});
+
+test("QA blocks visible English residual headings in Spanish articles", () => {
+  const articleBody = [
+    "# 7 Mejores IAs para Hacer Tareas en 2026",
+    "",
+    "## Quick Picks: las mejores segun cada caso",
+    "Zapier sirve para automatizar tareas administrativas.",
+    "",
+    "## FAQ",
+    "### Cual IA conviene para empezar?",
+    "Empieza comparando precio, idioma, limites y el tipo de tarea que necesitas resolver.",
+  ].join("\n");
+
+  const qa = qualityGate({
+    title: "7 Mejores IAs para Hacer Tareas en 2026",
+    content_markdown: articleBody,
+    language: "es",
+    primary_keyword: "mejor ia para hacer tareas",
+    word_count: 1200,
+  });
+
+  const englishIssue = qa.issues.find((issue) => issue.code === "english_residual");
+  assert.equal(qa.pass, false);
+  assert.ok(englishIssue, "QA should block visible English headings in ES content");
+  assert.match(englishIssue.message, /Quick Picks/i);
+});
+
+test("QA blocks Spanish listicles when title count exceeds developed tools", () => {
+  const articleBody = [
+    "# 7 Mejores IAs para Hacer Tareas en 2026",
+    "",
+    "## Zapier",
+    "Automatiza tareas entre aplicaciones.",
+    "## Jasper AI",
+    "Ayuda a redactar borradores y contenido.",
+    "## Monday.com",
+    "Organiza tareas de equipo.",
+    "## ClickUp",
+    "Centraliza tareas y documentos.",
+    "## Writesonic",
+    "Genera textos cortos para marketing.",
+    "",
+    "## FAQ",
+    "### Cual IA conviene para empezar?",
+    "Empieza comparando precio, idioma, limites y el tipo de tarea que necesitas resolver.",
+  ].join("\n");
+
+  const qa = qualityGate({
+    title: "7 Mejores IAs para Hacer Tareas en 2026",
+    content_markdown: articleBody,
+    language: "es",
+    primary_keyword: "mejor ia para hacer tareas",
+    word_count: 1200,
+  });
+
+  const mismatchIssue = qa.issues.find((issue) => issue.code === "list_count_mismatch");
+  assert.equal(qa.pass, false);
+  assert.ok(mismatchIssue, "QA should block list count mismatch");
+  assert.match(mismatchIssue.message, /expected 7/i);
+  assert.match(mismatchIssue.message, /found 5/i);
+});
+
+test("QA blocks stale 2023 references in Spanish 2026 articles", () => {
+  const articleBody = [
+    "# 7 Mejores IAs para Hacer Tareas en 2026",
+    "",
+    "## Zapier",
+    "A octubre 2023, Zapier era una opcion frecuente para automatizar tareas.",
+    "",
+    "## FAQ",
+    "### Cual IA conviene para empezar?",
+    "Empieza comparando precio, idioma, limites y el tipo de tarea que necesitas resolver.",
+  ].join("\n");
+
+  const qa = qualityGate({
+    title: "7 Mejores IAs para Hacer Tareas en 2026",
+    content_markdown: articleBody,
+    language: "es",
+    primary_keyword: "mejor ia para hacer tareas",
+    word_count: 1200,
+  });
+
+  const staleIssue = qa.issues.find((issue) => issue.code === "stale_reference");
+  assert.equal(qa.pass, false);
+  assert.ok(staleIssue, "QA should block stale references");
+  assert.match(staleIssue.message, /a octubre 2023/i);
+});
+
+test("QA blocks unsupported strong claims in Spanish articles", () => {
+  const articleBody = [
+    "# 7 Mejores IAs para Hacer Tareas en 2026",
+    "",
+    "## Zapier",
+    "Probamos en proyectos reales y vimos que reduce el trabajo manual en 30%-40%.",
+    "",
+    "## FAQ",
+    "### Cual IA conviene para empezar?",
+    "Empieza comparando precio, idioma, limites y el tipo de tarea que necesitas resolver.",
+  ].join("\n");
+
+  const qa = qualityGate({
+    title: "7 Mejores IAs para Hacer Tareas en 2026",
+    content_markdown: articleBody,
+    language: "es",
+    primary_keyword: "mejor ia para hacer tareas",
+    word_count: 1200,
+  });
+
+  const claimIssue = qa.issues.find((issue) => issue.code === "unsupported_claim");
+  assert.equal(qa.pass, false);
+  assert.ok(claimIssue, "QA should block unsupported strong claims");
+  assert.match(claimIssue.message, /30%-40%|probamos en proyectos reales/i);
+});
+
 test("placeholder repair replaces generic tools with real homework AI products", () => {
   const repaired = repairToolPlaceholders(
     "Tool A handles math. Tool B explains essays. Tool C summarizes readings.",
