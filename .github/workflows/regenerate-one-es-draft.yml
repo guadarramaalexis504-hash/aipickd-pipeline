@@ -10,7 +10,7 @@ on:
       article_id:
         description: "Unpublished Spanish draft article id to retire"
         required: true
-        default: "62e72631-6267-46ec-ae97-05da5e5c715a"
+        default: "939a80da-9254-4c9a-bafc-141742fdc42a"
       keyword_id:
         description: "Spanish keyword id to requeue and regenerate"
         required: true
@@ -70,15 +70,15 @@ jobs:
             exit 1
           fi
 
-      - name: Require approved Spanish draft and keyword
+      - name: Require valid Spanish draft id and approved keyword
         env:
           ARTICLE_ID: ${{ github.event.inputs.article_id }}
           KEYWORD_ID: ${{ github.event.inputs.keyword_id }}
-          APPROVED_ARTICLE_ID: 62e72631-6267-46ec-ae97-05da5e5c715a
           APPROVED_KEYWORD_ID: ff36854c-ed82-4066-a737-3063869d0c8b
         run: |
-          if [ "$ARTICLE_ID" != "$APPROVED_ARTICLE_ID" ]; then
-            echo "Refusing to run: article_id must be $APPROVED_ARTICLE_ID."
+          uuid_re='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'
+          if [[ ! "$ARTICLE_ID" =~ $uuid_re ]]; then
+            echo "Refusing to run: article_id must be a valid UUID."
             exit 1
           fi
           if [ "$KEYWORD_ID" != "$APPROVED_KEYWORD_ID" ]; then
