@@ -466,6 +466,107 @@ test("QA blocks unsupported strong claims in Spanish articles", () => {
   assert.match(claimIssue.message, /30%-40%|probamos en proyectos reales/i);
 });
 
+test("QA blocks Spanish quantitative claims when the article has no source links", () => {
+  const articleBody = [
+    "# ChatGPT vs Claude vs Gemini para estudiar",
+    "",
+    "## Comparacion principal",
+    "ChatGPT mejora la productividad en 65% y Claude reduce errores en 42%.",
+    "",
+    "## Preguntas frecuentes",
+    "### Cual conviene para estudiar?",
+    "Depende del tipo de tarea, presupuesto y necesidad de explicar el razonamiento.",
+  ].join("\n");
+
+  const qa = qualityGate({
+    title: "ChatGPT vs Claude vs Gemini para estudiar (2026)",
+    content_markdown: articleBody,
+    language: "es",
+    word_count: 1200,
+  });
+
+  const quantitativeIssue = qa.issues.find(
+    (issue) => issue.code === "unsupported_quantitative_claim"
+  );
+  assert.equal(qa.pass, false);
+  assert.ok(quantitativeIssue, "QA should block unsourced Spanish percentage claims");
+  assert.match(quantitativeIssue.message, /65%|42%/);
+});
+
+test("QA allows Spanish quantitative claims when source links are present", () => {
+  const articleBody = [
+    "# ChatGPT vs Claude vs Gemini para estudiar",
+    "",
+    "## Comparacion principal",
+    "Un informe publico reporta una mejora de 40% en ciertos flujos documentados.",
+    "Fuente: [estudio publicado](https://example.com/estudio-ia-estudiantes).",
+    "",
+    "## Preguntas frecuentes",
+    "### Cual conviene para estudiar?",
+    "Depende del tipo de tarea, presupuesto y necesidad de explicar el razonamiento.",
+  ].join("\n");
+
+  const qa = qualityGate({
+    title: "ChatGPT vs Claude vs Gemini para estudiar (2026)",
+    content_markdown: articleBody,
+    language: "es",
+    word_count: 1200,
+  });
+
+  const quantitativeIssue = qa.issues.find(
+    (issue) => issue.code === "unsupported_quantitative_claim"
+  );
+  assert.equal(quantitativeIssue, undefined);
+});
+
+test('QA blocks "FAQ" heading in Spanish articles', () => {
+  const articleBody = [
+    "# ChatGPT vs Claude vs Gemini para estudiar",
+    "",
+    "## Comparacion principal",
+    "ChatGPT, Claude y Gemini tienen fortalezas distintas para estudiar.",
+    "",
+    "## FAQ",
+    "### Cual conviene para estudiar?",
+    "Depende del tipo de tarea, presupuesto y necesidad de explicar el razonamiento.",
+  ].join("\n");
+
+  const qa = qualityGate({
+    title: "ChatGPT vs Claude vs Gemini para estudiar (2026)",
+    content_markdown: articleBody,
+    language: "es",
+    word_count: 1200,
+  });
+
+  const englishIssue = qa.issues.find((issue) => issue.code === "english_residual");
+  assert.equal(qa.pass, false);
+  assert.ok(englishIssue, "QA should block FAQ as residual English in ES content");
+  assert.match(englishIssue.message, /FAQ/);
+});
+
+test('QA accepts "Preguntas frecuentes" heading in Spanish articles', () => {
+  const articleBody = [
+    "# ChatGPT vs Claude vs Gemini para estudiar",
+    "",
+    "## Comparacion principal",
+    "ChatGPT, Claude y Gemini tienen fortalezas distintas para estudiar.",
+    "",
+    "## Preguntas frecuentes",
+    "### Cual conviene para estudiar?",
+    "Depende del tipo de tarea, presupuesto y necesidad de explicar el razonamiento.",
+  ].join("\n");
+
+  const qa = qualityGate({
+    title: "ChatGPT vs Claude vs Gemini para estudiar (2026)",
+    content_markdown: articleBody,
+    language: "es",
+    word_count: 1200,
+  });
+
+  const englishIssue = qa.issues.find((issue) => issue.code === "english_residual");
+  assert.equal(englishIssue, undefined);
+});
+
 test("placeholder repair replaces generic tools with real homework AI products", () => {
   const repaired = repairToolPlaceholders(
     "Tool A handles math. Tool B explains essays. Tool C summarizes readings.",

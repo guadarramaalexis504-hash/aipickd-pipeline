@@ -106,7 +106,7 @@ function validateRegenerationPreflight({ article, keyword, config, articleId, ke
     reasons = detectRegenerationReasons(article);
     if (reasons.length === 0) {
       issues.push(
-        "article must have a detectable regeneration reason: placeholder_terms, english_residual, list_count_mismatch, stale_reference, unsupported_claim, stored QA issue, repair_status, or last_error"
+        "article must have a detectable regeneration reason: placeholder_terms, english_residual, list_count_mismatch, stale_reference, unsupported_claim, unsupported_quantitative_claim, stored QA issue, repair_status, or last_error"
       );
     }
   }

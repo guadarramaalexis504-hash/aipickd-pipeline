@@ -88,6 +88,12 @@ const ES_VISIBLE_ENGLISH_PATTERNS = [
   { phrase: "Use cases", re: /\bUse cases\b/gi },
 ];
 
+const ES_ENGLISH_HEADING_PATTERNS = [
+  { phrase: "FAQ", re: /^FAQ:?$/i },
+  { phrase: "Pros", re: /^Pros:?$/i },
+  { phrase: "Cons", re: /^Cons:?$/i },
+];
+
 const STALE_REFERENCE_PATTERNS = [
   { phrase: "as of October 2023", re: /\bas of\s+October\s+2023\b/gi },
   { phrase: "a octubre 2023", re: /\ba\s+octubre\s+2023\b/gi },
@@ -97,6 +103,19 @@ const STALE_REFERENCE_PATTERNS = [
     phrase: "2024 as current/source reference",
     re: /\b(?:as of|a\s+(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)|dato clave|segun|segun|actualmente|precio|desde)[^\n.]{0,80}\b2024\b/gi,
   },
+];
+
+const UNSUPPORTED_QUANTITATIVE_CLAIM_PATTERNS = [
+  {
+    phrase: "percentage claim",
+    re: /\b\d{1,3}(?:[.,]\d+)?\s*%(?:\s*[-–]\s*\d{1,3}(?:[.,]\d+)?\s*%)?/gi,
+  },
+  { phrase: "x de cada y", re: /\b\d+\s+de\s+cada\s+\d+\b/gi },
+  {
+    phrase: "quantified improvement claim",
+    re: /\b(?:aumenta|aumentan|aument[oó]|incrementa|incrementan|reduce|reducen|mejora|mejoran|sube|baja)[^\n.]{0,80}\d{1,3}(?:[.,]\d+)?\s*%/gi,
+  },
+  { phrase: "segun datos", re: /\bseg[uú]n\s+datos\b/gi },
 ];
 
 const UNSUPPORTED_CLAIM_PATTERNS = [
@@ -172,6 +191,14 @@ function detectVisibleEnglishResidual(markdown = "", language = "en") {
   for (const pattern of ES_VISIBLE_ENGLISH_PATTERNS) {
     for (const match of visible.matchAll(pattern.re)) {
       matches.push({ phrase: pattern.phrase, value: match[0] });
+    }
+  }
+  for (const heading of extractHeadings(markdown)) {
+    const headingText = heading.text.replace(/\*\*/g, "").trim();
+    for (const pattern of ES_ENGLISH_HEADING_PATTERNS) {
+      if (pattern.re.test(headingText)) {
+        matches.push({ phrase: pattern.phrase, value: headingText });
+      }
     }
   }
   return matches;
@@ -318,8 +345,30 @@ function detectStaleReferences(article = {}) {
   return matches;
 }
 
+function countSourceLinks(markdown = "") {
+  const text = String(markdown || "");
+  const markdownLinks = text.match(/\[[^\]]+\]\(https?:\/\/[^)]+\)/gi) || [];
+  const withoutMarkdownLinks = text.replace(/\[[^\]]+\]\(https?:\/\/[^)]+\)/gi, " ");
+  const rawUrls = withoutMarkdownLinks.match(/https?:\/\/\S+/gi) || [];
+  return markdownLinks.length + rawUrls.length;
+}
+
 function hasSourceLink(markdown = "") {
-  return /\[[^\]]+\]\(https?:\/\/[^)]+\)/i.test(markdown) || /https?:\/\/\S+/i.test(markdown);
+  return countSourceLinks(markdown) > 0;
+}
+
+function detectUnsupportedQuantitativeClaims(article = {}) {
+  if (normalizeLanguage(article.language) !== "es") return [];
+  const markdown = article.content_markdown || "";
+  const visible = visibleMarkdownText(markdown);
+  const matches = [];
+  for (const pattern of UNSUPPORTED_QUANTITATIVE_CLAIM_PATTERNS) {
+    for (const match of visible.matchAll(pattern.re)) {
+      matches.push({ phrase: pattern.phrase, value: match[0] });
+    }
+  }
+  if (matches.length === 0 || countSourceLinks(markdown) > 0) return [];
+  return matches;
 }
 
 function detectUnsupportedClaims(article = {}) {
@@ -385,6 +434,23 @@ function detectSpanishQualityIssues(article = {}) {
         "stale_reference",
         `stale reference in 2026 Spanish article: ${found}`,
         "replace outdated source/current-date references with 2026-safe wording or a current source"
+      )
+    );
+  }
+
+  const unsupportedQuantitativeClaims = detectUnsupportedQuantitativeClaims(article);
+  if (unsupportedQuantitativeClaims.length > 0) {
+    const found = Array.from(new Set(unsupportedQuantitativeClaims.map((match) => match.value)))
+      .map((value) => {
+        const count = unsupportedQuantitativeClaims.filter((match) => match.value === value).length;
+        return `${value} (${count})`;
+      })
+      .join(", ");
+    issues.push(
+      issueObject(
+        "unsupported_quantitative_claim",
+        `unsupported quantitative claim(s) without source link: ${found}`,
+        "remove unsourced percentages/data claims or add a verifiable source link before publishing"
       )
     );
   }
@@ -475,7 +541,7 @@ function formatToolPlaceholderIssue(markdown = "") {
 
 function hasFaqSection(markdown, language = "en") {
   if (normalizeLanguage(language) === "es") {
-    return /^##\s+(?:FAQ|Preguntas frecuentes|Preguntas comunes)/im.test(markdown || "");
+    return /^##\s+(?:Preguntas frecuentes|Preguntas comunes)/im.test(markdown || "");
   }
   return /^##\s+(?:FAQ|Frequently Asked Questions|Common Questions)/im.test(markdown || "");
 }
@@ -603,6 +669,7 @@ module.exports = {
   detectSpanishQualityIssues,
   detectStaleReferences,
   detectToolPlaceholders,
+  detectUnsupportedQuantitativeClaims,
   detectUnsupportedClaims,
   detectVisibleEnglishResidual,
   formatAiTellIssue,
