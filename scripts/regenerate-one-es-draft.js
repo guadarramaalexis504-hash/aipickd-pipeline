@@ -36,7 +36,7 @@ async function fetchRows() {
     supa(
       "GET",
       `articles?id=eq.${encodeURIComponent(ARTICLE_ID)}` +
-        "&select=id,title,slug,status,language,keyword_id,content_markdown,word_count,wp_post_id,wp_url,qa_issues"
+        "&select=id,title,slug,status,language,keyword_id,content_markdown,word_count,wp_post_id,wp_url,qa_issues,repair_status,last_error"
     ),
     supa(
       "GET",
@@ -137,16 +137,12 @@ async function main() {
   }
 
   const placeholders = countPlaceholderMatches(article.content_markdown || "");
-  if (placeholders.count === 0) {
-    console.error("Refusing to regenerate: old draft has no configured placeholder terms.");
-    console.error("No writes performed.");
-    return 1;
-  }
 
   const now = new Date();
   const oldArticlePatch = buildOldArticleFailurePatch({
     article,
     placeholderMatches: placeholders.matches,
+    regenerationReasons: preflight.reasons,
     now,
   });
   const keywordPatch = buildKeywordResetPatch({ now });
@@ -166,6 +162,7 @@ async function main() {
     keyword_assigned_article_id_to: keywordPatch.assigned_article_id,
     old_placeholder_count: placeholders.count,
     old_placeholder_summary: placeholders.summary,
+    old_regeneration_reasons: preflight.reasons,
     pipeline_command: `node ${pipelineArgs.join(" ")}`,
     auto_publish: "false",
   };
