@@ -51,6 +51,31 @@ const AI_TELL_PATTERNS = [
   { phrase: "supercharge", re: /\bsupercharge(?:s|d|ing)?\b/gi, replacement: "improve" },
 ];
 
+const TOOL_PLACEHOLDER_PATTERNS = [
+  { phrase: "Tool A", re: /\bTool\s+A\b/g, key: "toolA" },
+  { phrase: "Tool B", re: /\bTool\s+B\b/g, key: "toolB" },
+  { phrase: "Tool C", re: /\bTool\s+C\b/g, key: "toolC" },
+  { phrase: "Herramienta A", re: /\bHerramienta\s+A\b/gi, key: "toolA" },
+  { phrase: "Herramienta B", re: /\bHerramienta\s+B\b/gi, key: "toolB" },
+  { phrase: "Herramienta C", re: /\bHerramienta\s+C\b/gi, key: "toolC" },
+  { phrase: "Producto A", re: /\bProducto\s+A\b/gi, key: "toolA" },
+  { phrase: "Producto B", re: /\bProducto\s+B\b/gi, key: "toolB" },
+  { phrase: "Producto C", re: /\bProducto\s+C\b/gi, key: "toolC" },
+  { phrase: "Producto A/B/C", re: /\bProducto\s+A\/B\/C\b/gi, key: "toolSet" },
+  { phrase: "[Tool]", re: /\[Tool\]/g, key: "genericTool" },
+  { phrase: "[Nombre de herramienta]", re: /\[Nombre de herramienta\]/gi, key: "genericTool" },
+  { phrase: "[Nombre del producto]", re: /\[Nombre del producto\]/gi, key: "genericProduct" },
+];
+
+const DEFAULT_TOOL_PLACEHOLDER_REPLACEMENTS = {
+  toolA: "ChatGPT",
+  toolB: "Claude",
+  toolC: "Gemini",
+  toolSet: "ChatGPT/Claude/Gemini",
+  genericTool: "ChatGPT",
+  genericProduct: "ChatGPT",
+};
+
 function uniqueMatches(matches) {
   return Array.from(new Set(matches.map((match) => match.phrase))).map((phrase) => ({
     phrase,
@@ -66,6 +91,17 @@ function detectAiTellPhrases(markdown = "") {
     if (!found) continue;
     for (const value of found) {
       matches.push({ phrase: pattern.phrase, value });
+    }
+  }
+  return matches;
+}
+
+function detectToolPlaceholders(markdown = "") {
+  const text = String(markdown || "");
+  const matches = [];
+  for (const pattern of TOOL_PLACEHOLDER_PATTERNS) {
+    for (const match of text.matchAll(pattern.re)) {
+      matches.push({ phrase: pattern.phrase, value: match[0], key: pattern.key });
     }
   }
   return matches;
@@ -87,10 +123,51 @@ function cleanupAiTellPhrases(markdown = "") {
   };
 }
 
+function repairToolPlaceholders(markdown = "", replacements = {}) {
+  let text = String(markdown || "");
+  const merged = { ...DEFAULT_TOOL_PLACEHOLDER_REPLACEMENTS, ...replacements };
+  const before = detectToolPlaceholders(text);
+  const applied = [];
+
+  for (const pattern of TOOL_PLACEHOLDER_PATTERNS) {
+    const replacement = merged[pattern.key];
+    let count = 0;
+    text = text.replace(pattern.re, () => {
+      count += 1;
+      return replacement;
+    });
+    if (count > 0) {
+      applied.push({
+        phrase: pattern.phrase,
+        replacement,
+        count,
+      });
+    }
+  }
+
+  const after = detectToolPlaceholders(text);
+  return {
+    text,
+    before: uniqueMatches(before),
+    replacements: applied,
+    remaining: uniqueMatches(after),
+    changed: text !== String(markdown || ""),
+  };
+}
+
 function formatAiTellIssue(markdown = "") {
   const matches = detectAiTellPhrases(markdown);
   if (matches.length === 0) return null;
   return `${matches.length} AI-tell phrases (polish step didn't scrub)`;
+}
+
+function formatToolPlaceholderIssue(markdown = "") {
+  const matches = detectToolPlaceholders(markdown);
+  if (matches.length === 0) return null;
+  const found = uniqueMatches(matches)
+    .map((match) => `${match.phrase} (${match.count})`)
+    .join(", ");
+  return `${matches.length} unresolved tool/product placeholder(s): ${found}`;
 }
 
 function hasFaqSection(markdown, language = "en") {
@@ -182,6 +259,17 @@ function qualityGate(article = {}) {
     });
   }
 
+  const placeholderMessage = formatToolPlaceholderIssue(markdown);
+  if (placeholderMessage) {
+    issues.push({
+      code: "tool_placeholders",
+      message: placeholderMessage,
+      severity: "blocking",
+      repairable: true,
+      recommendation: "replace placeholders with real product names before publishing",
+    });
+  }
+
   return {
     pass: issues.length === 0,
     issues,
@@ -202,10 +290,15 @@ function issueMessages(qa) {
 
 module.exports = {
   AI_TELL_PHRASES,
+  DEFAULT_TOOL_PLACEHOLDER_REPLACEMENTS,
+  TOOL_PLACEHOLDER_PATTERNS,
   cleanupAiTellPhrases,
   detectAiTellPhrases,
+  detectToolPlaceholders,
   formatAiTellIssue,
+  formatToolPlaceholderIssue,
   qualityGate,
+  repairToolPlaceholders,
   issueMessages,
   hasFaqSection,
   detectLanguageMismatch,

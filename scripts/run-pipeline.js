@@ -41,6 +41,7 @@ const {
   cleanupAiTellPhrases,
   detectAiTellPhrases,
   formatAiTellIssue,
+  formatToolPlaceholderIssue,
 } = require("./lib/quality");
 
 /**
@@ -535,19 +536,19 @@ async function generateOne() {
 Required sections (all mandatory):
 1. Quick Verdict (who wins overall)
 2. Overview (what both tools do)
-3. Feature Comparison (markdown table: Feature | Tool A | Tool B, min 8 rows)
+3. Feature Comparison (markdown table with the actual product names as column headers, min 8 rows)
 4. Pricing Comparison (markdown table with all tiers)
 5. Performance & Speed
 6. Ease of Use
 7. Integrations & Compatibility
-8. Best Use Cases (Tool A for X, Tool B for Y)
+8. Best Use Cases (name the exact product that fits each use case)
 9. Pros & Cons (table for each tool)
 10. Final Verdict & Recommendation
 11. FAQ`,
       review: `ARTICLE TYPE: REVIEW
 Required sections (all mandatory):
 1. Quick Verdict (2-3 sentences)
-2. What Is [Tool] (overview)
+2. What Is the Product (use the actual product name, not a placeholder)
 3. Key Features (deep-dive, one H3 per major feature)
 4. Pricing & Plans (markdown table: Plan | Price | Features)
 5. Pros & Cons (markdown table)
@@ -665,7 +666,8 @@ Rules:
 9. ⚠️ MINIMUM 2000 WORDS — this is non-negotiable. Short sections must be expanded with examples.
 10. Cover EVERY section from the outline fully. DO NOT skip sections or write one-liners.
 11. End with a full "## FAQ" section answering all ${(outline.faqs || []).length} questions in detail (each answer min 3 sentences).
-12. ⭐ CITATION CAPSULE (GEO/AEO requirement): EVERY H2 section (except FAQ) MUST end with a "Key fact" blockquote — exactly this format:
+12. NEVER leave generic placeholders such as "Tool A", "Tool B", "Tool C", "[Tool]", "[Nombre de herramienta]", or "Producto A". Use real product names in every heading, table, and recommendation.
+13. ⭐ CITATION CAPSULE (GEO/AEO requirement): EVERY H2 section (except FAQ) MUST end with a "Key fact" blockquote — exactly this format:
 
 > **Key fact (as of April 2026):** [One factual, citable sentence with a specific number, date, comparison, or claim that an AI search engine like ChatGPT, Perplexity, or Google AI Overview would quote verbatim. Must be standalone — no pronouns like "this" or "that" referring to context above.]
 
@@ -677,7 +679,7 @@ Rules:
 
    These callouts are what AI search engines extract as citation passages. Without them, our articles are invisible to ChatGPT/Perplexity even if they rank #1 in Google. EVERY H2 needs one — no exceptions except the FAQ section.
 
-13. DO NOT wrap your output in code fences (\`\`\`markdown ... \`\`\`). Output ONLY raw markdown body. Start with the # H1 heading directly.
+14. DO NOT wrap your output in code fences (\`\`\`markdown ... \`\`\`). Output ONLY raw markdown body. Start with the # H1 heading directly.
 
 Output: pure markdown. Start with # H1. No commentary before or after.`,
       16000
@@ -996,6 +998,8 @@ function qualityGate(article) {
 
   // Placeholder / lorem-ipsum / TODO markers
   if (/\b(?:TODO|FIXME|XXX|lorem ipsum)\b/i.test(md)) issues.push("placeholder text in body");
+  const toolPlaceholderIssue = formatToolPlaceholderIssue(md);
+  if (toolPlaceholderIssue) issues.push(toolPlaceholderIssue);
 
   // Truncation indicators (GPT might truncate output)
   if (md.endsWith("...") || md.endsWith("…")) issues.push("appears truncated");
@@ -1091,6 +1095,7 @@ function qaIssueCode(message) {
   if (text.includes("html")) return "html_validator";
   if (text.includes("duplicate")) return "duplicate";
   if (text.includes("language")) return "language_mismatch";
+  if (text.includes("placeholder")) return "tool_placeholders";
   if (text.includes("schema")) return "schema_error";
   return "qa_failed";
 }

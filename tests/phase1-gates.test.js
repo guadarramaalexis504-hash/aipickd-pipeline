@@ -13,6 +13,7 @@ const {
   cleanupAiTellPhrases,
   detectAiTellPhrases,
   qualityGate,
+  repairToolPlaceholders,
 } = require("../scripts/lib/quality");
 
 test("cli safety: mutating scripts are dry/report-only unless an explicit write flag is present", () => {
@@ -161,4 +162,46 @@ test("AI-tell cleanup removes common phrases and QA blocks any leftovers clearly
   assert.ok(aiTellIssue, "QA should block uncleaned AI-tell clusters");
   assert.match(aiTellIssue.message, /AI-tell phrases/);
   assert.equal(aiTellIssue.repairable, true);
+});
+
+test("QA blocks generic tool placeholders before publish", () => {
+  const articleBody = [
+    "# Best AI Homework Helpers",
+    "",
+    "Tool A is useful for math homework, while Tool B is better for essays.",
+    "Tool C can help summarize long readings, but the draft must name real products.",
+    "",
+    "## FAQ",
+    "### Which AI homework helper should students try first?",
+    "Start with a real product name, then compare pricing, accuracy, and citation controls.",
+  ].join("\n");
+
+  const qa = qualityGate({
+    content_markdown: articleBody,
+    language: "en",
+    word_count: 1200,
+  });
+
+  const placeholderIssue = qa.issues.find((issue) => issue.code === "tool_placeholders");
+  assert.equal(qa.pass, false);
+  assert.ok(placeholderIssue, "QA should block Tool A/B/C placeholders");
+  assert.match(placeholderIssue.message, /Tool A/i);
+  assert.equal(placeholderIssue.repairable, true);
+});
+
+test("placeholder repair replaces generic tools with real homework AI products", () => {
+  const repaired = repairToolPlaceholders(
+    "Tool A handles math. Tool B explains essays. Tool C summarizes readings.",
+    {
+      toolA: "ChatGPT",
+      toolB: "Claude",
+      toolC: "Gemini",
+    }
+  );
+
+  assert.equal(repaired.changed, true);
+  assert.match(repaired.text, /ChatGPT handles math/);
+  assert.match(repaired.text, /Claude explains essays/);
+  assert.match(repaired.text, /Gemini summarizes readings/);
+  assert.equal(repaired.remaining.length, 0);
 });
