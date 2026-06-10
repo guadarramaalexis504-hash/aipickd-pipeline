@@ -65,6 +65,48 @@ const TOOL_PLACEHOLDER_PATTERNS = [
   { phrase: "[Tool]", re: /\[Tool\]/g, key: "genericTool" },
   { phrase: "[Nombre de herramienta]", re: /\[Nombre de herramienta\]/gi, key: "genericTool" },
   { phrase: "[Nombre del producto]", re: /\[Nombre del producto\]/gi, key: "genericProduct" },
+  { phrase: "[Nombre de la app]", re: /\[Nombre de la app\]/gi, key: null },
+  { phrase: "[Nombre de IA]", re: /\[Nombre de IA\]/gi, key: null },
+  { phrase: "[Nombre]", re: /\[Nombre\]/gi, key: null },
+  {
+    phrase: "bracketed Spanish placeholder",
+    re: /\[(?:Herramienta|Producto|Nombre)[^\]]*\]/gi,
+    key: null,
+    phraseFromValue: true,
+  },
+];
+
+const ES_VISIBLE_ENGLISH_PATTERNS = [
+  { phrase: "Quick Picks", re: /\bQuick Picks\b/gi },
+  { phrase: "Key fact", re: /\bKey fact\b/gi },
+  { phrase: "Final Verdict", re: /\bFinal Verdict\b/gi },
+  { phrase: "Pros and Cons", re: /\bPros and Cons\b/gi },
+  { phrase: "Pricing", re: /\bPricing\b/gi },
+  { phrase: "Features", re: /\bFeatures\b/gi },
+  { phrase: "Overview", re: /\bOverview\b/gi },
+  { phrase: "Best for", re: /\bBest for\b/gi },
+  { phrase: "Use cases", re: /\bUse cases\b/gi },
+];
+
+const STALE_REFERENCE_PATTERNS = [
+  { phrase: "as of October 2023", re: /\bas of\s+October\s+2023\b/gi },
+  { phrase: "a octubre 2023", re: /\ba\s+octubre\s+2023\b/gi },
+  { phrase: "octubre 2023", re: /\boctubre\s+2023\b/gi },
+  { phrase: "2023", re: /\b2023\b/g },
+  {
+    phrase: "2024 as current/source reference",
+    re: /\b(?:as of|a\s+(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)|dato clave|segun|segun|actualmente|precio|desde)[^\n.]{0,80}\b2024\b/gi,
+  },
+];
+
+const UNSUPPORTED_CLAIM_PATTERNS = [
+  { phrase: "percentage claim", re: /\b\d{1,3}\s*%(?:\s*[-–]\s*\d{1,3}\s*%)?\b/g },
+  { phrase: "mas usada", re: /\bm[aá]s\s+usad[ao]s?\b/gi },
+  { phrase: "lider del mercado", re: /\bl[ií]der(?:es)?\s+del\s+mercado\b/gi },
+  { phrase: "probamos en proyectos reales", re: /\bprobamos\s+en\s+proyectos\s+reales\b/gi },
+  { phrase: "probamos", re: /\bprobamos\b/gi },
+  { phrase: "probe", re: /\bprob[eé]\b/gi },
+  { phrase: "probadas", re: /\bprobad[ao]s?\b/gi },
 ];
 
 const DEFAULT_TOOL_PLACEHOLDER_REPLACEMENTS = {
@@ -101,10 +143,228 @@ function detectToolPlaceholders(markdown = "") {
   const matches = [];
   for (const pattern of TOOL_PLACEHOLDER_PATTERNS) {
     for (const match of text.matchAll(pattern.re)) {
-      matches.push({ phrase: pattern.phrase, value: match[0], key: pattern.key });
+      matches.push({
+        phrase: pattern.phraseFromValue ? match[0] : pattern.phrase,
+        value: match[0],
+        key: pattern.key,
+      });
     }
   }
   return matches;
+}
+
+function visibleMarkdownText(markdown = "") {
+  return String(markdown || "")
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/`[^`\n]*`/g, " ")
+    .replace(/!\[[^\]]*\]\([^)]+\)/g, " ")
+    .replace(/\[([^\]]+)\]\((?:https?:\/\/|mailto:)[^)]+\)/gi, "$1")
+    .replace(/https?:\/\/[^\s)]+/gi, " ")
+    .replace(/\[AFFILIATE:[^\]]+\]/gi, "")
+    .replace(/\[\/AFFILIATE\]/gi, "")
+    .replace(/<[^>]+>/g, " ");
+}
+
+function detectVisibleEnglishResidual(markdown = "", language = "en") {
+  if (normalizeLanguage(language) !== "es") return [];
+  const visible = visibleMarkdownText(markdown);
+  const matches = [];
+  for (const pattern of ES_VISIBLE_ENGLISH_PATTERNS) {
+    for (const match of visible.matchAll(pattern.re)) {
+      matches.push({ phrase: pattern.phrase, value: match[0] });
+    }
+  }
+  return matches;
+}
+
+function extractHeadings(markdown = "") {
+  return Array.from(String(markdown || "").matchAll(/^(#{2,3})\s+(.+?)\s*$/gm)).map((match) => ({
+    level: match[1].length,
+    text: match[2].replace(/\*\*/g, "").trim(),
+  }));
+}
+
+function stripAccents(text = "") {
+  return String(text || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+function cleanToolHeadingName(heading = "") {
+  return String(heading || "")
+    .replace(/\[AFFILIATE:[^\]]+\]/gi, "")
+    .replace(/\[\/AFFILIATE\]/gi, "")
+    .replace(/^\[(?:Herramienta|Producto)\s+\d+\]\s*:\s*/i, "")
+    .replace(/^(?:Herramienta|Producto)\s+\d+\s*:\s*/i, "")
+    .replace(/^\d+\s*[.)-]\s*/, "")
+    .replace(/^[#*\s]+|[*\s]+$/g, "")
+    .trim();
+}
+
+function isGenericListicleHeading(heading = "") {
+  const normalized = stripAccents(cleanToolHeadingName(heading)).toLowerCase();
+  return /^(faq|preguntas|conclusion|comparativa|como elegimos|como elegir|mas herramientas|quick picks|veredicto|puntos clave|tabla|precio|pros|contras|ventajas|desventajas|caracteristicas|aspectos|metodologia|resumen)\b/.test(
+    normalized
+  );
+}
+
+function expectedListCountFromTitle(title = "") {
+  const match = String(title || "").match(/\b(\d{1,2})\s+(?:mejores|mejor|best|top)\b/i);
+  return match ? Number(match[1]) : 0;
+}
+
+function countTableListItems(markdown = "") {
+  const lines = String(markdown || "").split(/\r?\n/);
+  let inRelevantTable = false;
+  let count = 0;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("|")) {
+      inRelevantTable = false;
+      continue;
+    }
+    const cells = trimmed
+      .split("|")
+      .slice(1, -1)
+      .map((cell) => cell.trim());
+    if (cells.length < 2) continue;
+    const joined = stripAccents(cells.join(" ")).toLowerCase();
+    if (/herramienta|producto|tool|nombre|name/.test(joined)) {
+      inRelevantTable = true;
+      continue;
+    }
+    if (/^-+$/.test(cells.join("").replace(/\s/g, ""))) continue;
+    if (inRelevantTable && !isGenericListicleHeading(cells[0]) && cleanToolHeadingName(cells[0])) {
+      count++;
+    }
+  }
+  return count;
+}
+
+function detectListCountMismatch(article = {}) {
+  const expected = expectedListCountFromTitle(article.title || "");
+  if (!expected) return null;
+
+  const headings = extractHeadings(article.content_markdown || "");
+  const toolHeadings = [];
+  for (const heading of headings) {
+    const cleanName = cleanToolHeadingName(heading.text);
+    if (!cleanName || isGenericListicleHeading(heading.text)) continue;
+    if (/^(?:que|cual|cuando|donde|por que|como)\b/i.test(stripAccents(cleanName))) continue;
+    toolHeadings.push(cleanName.toLowerCase());
+  }
+
+  const headingCount = new Set(toolHeadings).size;
+  const tableCount = countTableListItems(article.content_markdown || "");
+  const found = Math.max(headingCount, tableCount);
+  if (found >= expected) return null;
+  return { expected, found };
+}
+
+function detectStaleReferences(article = {}) {
+  const title = article.title || "";
+  const markdown = article.content_markdown || "";
+  const isCurrentYearArticle = /\b2026\b/.test(`${title}\n${markdown}`);
+  if (!isCurrentYearArticle) return [];
+  const visible = visibleMarkdownText(markdown);
+  const matches = [];
+  for (const pattern of STALE_REFERENCE_PATTERNS) {
+    for (const match of visible.matchAll(pattern.re)) {
+      matches.push({ phrase: pattern.phrase, value: match[0] });
+    }
+  }
+  return matches;
+}
+
+function hasSourceLink(markdown = "") {
+  return /\[[^\]]+\]\(https?:\/\/[^)]+\)/i.test(markdown) || /https?:\/\/\S+/i.test(markdown);
+}
+
+function detectUnsupportedClaims(article = {}) {
+  const markdown = article.content_markdown || "";
+  if (hasSourceLink(markdown)) return [];
+  const visible = visibleMarkdownText(markdown);
+  const matches = [];
+  for (const pattern of UNSUPPORTED_CLAIM_PATTERNS) {
+    for (const match of visible.matchAll(pattern.re)) {
+      matches.push({ phrase: pattern.phrase, value: match[0] });
+    }
+  }
+  return matches;
+}
+
+function issueObject(code, message, recommendation, repairable = true) {
+  return {
+    code,
+    message,
+    severity: "blocking",
+    repairable,
+    recommendation,
+  };
+}
+
+function detectSpanishQualityIssues(article = {}) {
+  const issues = [];
+  const language = normalizeLanguage(article.language);
+  if (language !== "es") return issues;
+
+  const englishResidual = detectVisibleEnglishResidual(article.content_markdown || "", language);
+  if (englishResidual.length > 0) {
+    const found = uniqueMatches(englishResidual)
+      .map((match) => `${match.phrase} (${match.count})`)
+      .join(", ");
+    issues.push(
+      issueObject(
+        "english_residual",
+        `visible English residual in Spanish article: ${found}`,
+        "rewrite visible headings and labels in Spanish before publishing"
+      )
+    );
+  }
+
+  const listMismatch = detectListCountMismatch(article);
+  if (listMismatch) {
+    issues.push(
+      issueObject(
+        "list_count_mismatch",
+        `listicle count mismatch: expected ${listMismatch.expected} developed tools/items, found ${listMismatch.found}`,
+        "regenerate or expand the draft so the title count matches fully developed tools"
+      )
+    );
+  }
+
+  const staleReferences = detectStaleReferences(article);
+  if (staleReferences.length > 0) {
+    const found = uniqueMatches(staleReferences)
+      .map((match) => `${match.phrase} (${match.count})`)
+      .join(", ");
+    issues.push(
+      issueObject(
+        "stale_reference",
+        `stale reference in 2026 Spanish article: ${found}`,
+        "replace outdated source/current-date references with 2026-safe wording or a current source"
+      )
+    );
+  }
+
+  const unsupportedClaims = detectUnsupportedClaims(article);
+  if (unsupportedClaims.length > 0) {
+    const found = Array.from(new Set(unsupportedClaims.map((match) => match.value)))
+      .map((value) => {
+        const count = unsupportedClaims.filter((match) => match.value === value).length;
+        return `${value} (${count})`;
+      })
+      .join(", ");
+    issues.push(
+      issueObject(
+        "unsupported_claim",
+        `unsupported strong claim(s) without source link: ${found}`,
+        "remove first-party testing/market-share claims or add a verifiable source before publishing"
+      )
+    );
+  }
+
+  return issues;
 }
 
 function cleanupAiTellPhrases(markdown = "") {
@@ -131,6 +391,7 @@ function repairToolPlaceholders(markdown = "", replacements = {}) {
 
   for (const pattern of TOOL_PLACEHOLDER_PATTERNS) {
     const replacement = merged[pattern.key];
+    if (!replacement) continue;
     let count = 0;
     text = text.replace(pattern.re, () => {
       count += 1;
@@ -270,6 +531,8 @@ function qualityGate(article = {}) {
     });
   }
 
+  issues.push(...detectSpanishQualityIssues(article));
+
   return {
     pass: issues.length === 0,
     issues,
@@ -294,7 +557,12 @@ module.exports = {
   TOOL_PLACEHOLDER_PATTERNS,
   cleanupAiTellPhrases,
   detectAiTellPhrases,
+  detectListCountMismatch,
+  detectSpanishQualityIssues,
+  detectStaleReferences,
   detectToolPlaceholders,
+  detectUnsupportedClaims,
+  detectVisibleEnglishResidual,
   formatAiTellIssue,
   formatToolPlaceholderIssue,
   qualityGate,
