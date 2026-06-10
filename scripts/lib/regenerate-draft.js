@@ -4,8 +4,13 @@ const { detectSpanishQualityIssues, detectToolPlaceholders } = require("./qualit
 const { normalizeLanguage } = require("./spanish-gate");
 
 const CONFIRM_REGENERATE = "REGENERATE_ONE_ES_DRAFT";
-const DEFAULT_REGENERATE_ARTICLE_ID = "62e72631-6267-46ec-ae97-05da5e5c715a";
-const DEFAULT_REGENERATE_KEYWORD_ID = "ff36854c-ed82-4066-a737-3063869d0c8b";
+const DEFAULT_REGENERATE_ARTICLE_ID = "ab0041d0-303f-4d14-a8b2-0a41c06ae805";
+const DEFAULT_REGENERATE_KEYWORD_ID = "58a4cb28-0a04-4c19-aa1d-0e676335301e";
+const APPROVED_REGENERATE_KEYWORD_IDS = Object.freeze([
+  "ff36854c-ed82-4066-a737-3063869d0c8b",
+  "58a4cb28-0a04-4c19-aa1d-0e676335301e",
+]);
+const APPROVED_REGENERATE_KEYWORD_ID_SET = new Set(APPROVED_REGENERATE_KEYWORD_IDS);
 const REGENERATABLE_STATUSES = new Set(["draft", "needs_repair", "qa_failed"]);
 
 function qaIssueSummary(issue) {
@@ -82,8 +87,12 @@ function validateRegenerationPreflight({ article, keyword, config, articleId, ke
   const issues = [];
   let reasons = [];
 
-  if (keywordId !== DEFAULT_REGENERATE_KEYWORD_ID) {
-    issues.push(`keyword_id must be approved keyword ${DEFAULT_REGENERATE_KEYWORD_ID}`);
+  if (!APPROVED_REGENERATE_KEYWORD_ID_SET.has(keywordId)) {
+    issues.push(
+      `keyword_id must be an approved Spanish smoke keyword: ${APPROVED_REGENERATE_KEYWORD_IDS.join(
+        ", "
+      )}`
+    );
   }
 
   if (!article) {
@@ -207,6 +216,7 @@ function buildRunPipelineArgs(keywordId) {
 
 module.exports = {
   CONFIRM_REGENERATE,
+  APPROVED_REGENERATE_KEYWORD_IDS,
   DEFAULT_REGENERATE_ARTICLE_ID,
   DEFAULT_REGENERATE_KEYWORD_ID,
   buildKeywordResetPatch,

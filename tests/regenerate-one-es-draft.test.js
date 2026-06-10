@@ -12,6 +12,8 @@ const {
 const articleId = "62e72631-6267-46ec-ae97-05da5e5c715a";
 const secondArticleId = "939a80da-9254-4c9a-bafc-141742fdc42a";
 const keywordId = "ff36854c-ed82-4066-a737-3063869d0c8b";
+const comparisonArticleId = "ab0041d0-303f-4d14-a8b2-0a41c06ae805";
+const comparisonKeywordId = "58a4cb28-0a04-4c19-aa1d-0e676335301e";
 const otherKeywordId = "11111111-1111-4111-8111-111111111111";
 
 function goodState(overrides = {}) {
@@ -92,6 +94,48 @@ function secondDraftState(overrides = {}) {
   });
 }
 
+function comparisonDraftState(overrides = {}) {
+  return goodState({
+    article: {
+      id: comparisonArticleId,
+      keyword_id: comparisonKeywordId,
+      title: "ChatGPT vs Claude vs Gemini: Cual es mejor para estudiar? (2026)",
+      slug: "chatgpt-vs-claude-vs-gemini-para-estudiar-2026",
+      status: "draft",
+      language: "es",
+      wp_post_id: null,
+      wp_url: null,
+      qa_issues: [],
+      repair_status: null,
+      last_error: null,
+      content_markdown: [
+        "# ChatGPT vs Claude vs Gemini: Cual es mejor para estudiar? (2026)",
+        "",
+        "## ChatGPT",
+        "Ayuda a crear guias de estudio. Mejora el repaso en 65%.",
+        "",
+        "## Claude",
+        "Resume textos largos y mejora apuntes en 42%.",
+        "",
+        "## Gemini",
+        "Sirve para estudiar con busquedas y reduce tiempo en 40%.",
+        "",
+        "## FAQ",
+        "### Cual conviene?",
+        "Depende de la materia, presupuesto y privacidad.",
+      ].join("\n"),
+    },
+    keyword: {
+      id: comparisonKeywordId,
+      keyword: "chatgpt vs claude vs gemini para estudiar",
+      status: "generated",
+      language: "es",
+      assigned_article_id: comparisonArticleId,
+    },
+    ...overrides,
+  });
+}
+
 test("regeneration preflight passes only for the exact unpublished Spanish draft and keyword", () => {
   const state = goodState();
   const result = validateRegenerationPreflight({
@@ -137,6 +181,20 @@ test("regeneration preflight accepts the second unpublished Spanish draft when Q
   assert.ok(result.reasons.some((reason) => reason.code === "unsupported_claim"));
 });
 
+test("regeneration preflight accepts the approved ChatGPT vs Claude vs Gemini smoke keyword", () => {
+  const state = comparisonDraftState();
+  const result = validateRegenerationPreflight({
+    ...state,
+    articleId: comparisonArticleId,
+    keywordId: comparisonKeywordId,
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.issues, []);
+  assert.ok(result.reasons.some((reason) => reason.code === "english_residual"));
+  assert.ok(result.reasons.some((reason) => reason.code === "unsupported_quantitative_claim"));
+});
+
 test("regeneration preflight rejects an unrelated article id", () => {
   const state = secondDraftState();
   const result = validateRegenerationPreflight({
@@ -172,7 +230,22 @@ test("regeneration preflight rejects an unapproved keyword id", () => {
   });
 
   assert.equal(result.ok, false);
-  assert.match(result.issues.join("\n"), /keyword_id must be approved keyword/);
+  assert.match(result.issues.join("\n"), /approved Spanish smoke keyword/);
+});
+
+test("regeneration preflight rejects when Spanish pipeline is globally enabled", () => {
+  const state = comparisonDraftState({
+    config: { paused: false, spanish_pipeline_enabled: true },
+  });
+
+  const result = validateRegenerationPreflight({
+    ...state,
+    articleId: comparisonArticleId,
+    keywordId: comparisonKeywordId,
+  });
+
+  assert.equal(result.ok, false);
+  assert.match(result.issues.join("\n"), /spanish_pipeline_enabled must be false/);
 });
 
 test("regeneration preflight rejects published articles", () => {
