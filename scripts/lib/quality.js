@@ -203,14 +203,49 @@ function cleanToolHeadingName(heading = "") {
 
 function isGenericListicleHeading(heading = "") {
   const normalized = stripAccents(cleanToolHeadingName(heading)).toLowerCase();
-  return /^(faq|preguntas|conclusion|comparativa|como elegimos|como elegir|mas herramientas|quick picks|veredicto|puntos clave|tabla|precio|pros|contras|ventajas|desventajas|caracteristicas|aspectos|metodologia|resumen)\b/.test(
+  return /^(faq|preguntas|conclusion|comparativa|como elegimos|como elegir|como seleccionamos|mas herramientas|quick picks|veredicto|puntos clave|tabla|precio|precios|plan|planes|pros|contras|ventajas|desventajas|caracteristicas|aspectos|metodologia|resumen|para que sirve|ejemplo|mejor caso|caso de uso)\b/.test(
     normalized
   );
 }
 
 function expectedListCountFromTitle(title = "") {
-  const match = String(title || "").match(/\b(\d{1,2})\s+(?:mejores|mejor|best|top)\b/i);
-  return match ? Number(match[1]) : 0;
+  const normalized = stripAccents(title).toLowerCase();
+  const patterns = [
+    /\b(\d{1,2})\s+(?:mejores?|ias?|herramientas?|apps?|aplicaciones|opciones|alternativas|tools?|best|top)\b/i,
+    /\btop\s+(\d{1,2})\b/i,
+  ];
+  for (const pattern of patterns) {
+    const match = normalized.match(pattern);
+    if (match) return Number(match[1]);
+  }
+  return 0;
+}
+
+function hasNumberedToolPrefix(heading = "") {
+  return /^\s*(?:\d+\s*[.)-]|\[(?:Herramienta|Producto)\s+\d+\]\s*:)/i.test(String(heading || ""));
+}
+
+function developedToolHeadingKey(heading = {}) {
+  const cleanName = cleanToolHeadingName(heading.text);
+  const normalized = stripAccents(cleanName).toLowerCase();
+  if (!cleanName || isGenericListicleHeading(heading.text)) return null;
+  if (/^[¿?¡!\s]*(?:que|cual|cuando|donde|por que|como)\b/i.test(normalized)) return null;
+  if (heading.level !== 2 && !(heading.level === 3 && hasNumberedToolPrefix(heading.text))) {
+    return null;
+  }
+  return stripAccents(cleanName.split(":")[0])
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function countDevelopedToolSections(headings = []) {
+  const keys = new Set();
+  for (const heading of headings) {
+    const key = developedToolHeadingKey(heading);
+    if (key) keys.add(key);
+  }
+  return keys.size;
 }
 
 function countTableListItems(markdown = "") {
@@ -246,17 +281,24 @@ function detectListCountMismatch(article = {}) {
   if (!expected) return null;
 
   const headings = extractHeadings(article.content_markdown || "");
-  const toolHeadings = [];
-  for (const heading of headings) {
-    const cleanName = cleanToolHeadingName(heading.text);
-    if (!cleanName || isGenericListicleHeading(heading.text)) continue;
-    if (/^(?:que|cual|cuando|donde|por que|como)\b/i.test(stripAccents(cleanName))) continue;
-    toolHeadings.push(cleanName.toLowerCase());
+  const tableCount = countTableListItems(article.content_markdown || "");
+  let found;
+
+  if (normalizeLanguage(article.language) === "es") {
+    const developedHeadingCount = countDevelopedToolSections(headings);
+    found = developedHeadingCount > 0 ? developedHeadingCount : tableCount;
+  } else {
+    const toolHeadings = [];
+    for (const heading of headings) {
+      const cleanName = cleanToolHeadingName(heading.text);
+      if (!cleanName || isGenericListicleHeading(heading.text)) continue;
+      if (/^(?:que|cual|cuando|donde|por que|como)\b/i.test(stripAccents(cleanName))) continue;
+      toolHeadings.push(cleanName.toLowerCase());
+    }
+    const headingCount = new Set(toolHeadings).size;
+    found = Math.max(headingCount, tableCount);
   }
 
-  const headingCount = new Set(toolHeadings).size;
-  const tableCount = countTableListItems(article.content_markdown || "");
-  const found = Math.max(headingCount, tableCount);
   if (found >= expected) return null;
   return { expected, found };
 }
@@ -327,7 +369,7 @@ function detectSpanishQualityIssues(article = {}) {
     issues.push(
       issueObject(
         "list_count_mismatch",
-        `listicle count mismatch: expected ${listMismatch.expected} developed tools/items, found ${listMismatch.found}`,
+        `title promises ${listMismatch.expected} tools but only ${listMismatch.found} were developed`,
         "regenerate or expand the draft so the title count matches fully developed tools"
       )
     );
