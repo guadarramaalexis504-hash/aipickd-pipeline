@@ -10,11 +10,11 @@ on:
       article_id:
         description: "Unpublished Spanish draft article id to retire"
         required: true
-        default: "939a80da-9254-4c9a-bafc-141742fdc42a"
+        default: "ab0041d0-303f-4d14-a8b2-0a41c06ae805"
       keyword_id:
         description: "Spanish keyword id to requeue and regenerate"
         required: true
-        default: "ff36854c-ed82-4066-a737-3063869d0c8b"
+        default: "58a4cb28-0a04-4c19-aa1d-0e676335301e"
 
 permissions:
   contents: read
@@ -74,17 +74,30 @@ jobs:
         env:
           ARTICLE_ID: ${{ github.event.inputs.article_id }}
           KEYWORD_ID: ${{ github.event.inputs.keyword_id }}
-          APPROVED_KEYWORD_ID: ff36854c-ed82-4066-a737-3063869d0c8b
+          APPROVED_KEYWORD_IDS: >-
+            ff36854c-ed82-4066-a737-3063869d0c8b
+            58a4cb28-0a04-4c19-aa1d-0e676335301e
         run: |
           uuid_re='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'
           if [[ ! "$ARTICLE_ID" =~ $uuid_re ]]; then
             echo "Refusing to run: article_id must be a valid UUID."
             exit 1
           fi
-          if [ "$KEYWORD_ID" != "$APPROVED_KEYWORD_ID" ]; then
-            echo "Refusing to run: keyword_id must be $APPROVED_KEYWORD_ID."
+          if [[ ! "$KEYWORD_ID" =~ $uuid_re ]]; then
+            echo "Refusing to run: keyword_id must be a valid UUID."
             exit 1
           fi
+          case " $APPROVED_KEYWORD_IDS " in
+            *" $KEYWORD_ID "*) ;;
+            *)
+              echo "Refusing to run: keyword_id must be one of the approved Spanish smoke keyword IDs."
+              echo "Approved keyword IDs: $APPROVED_KEYWORD_IDS"
+              exit 1
+              ;;
+          esac
+
+          echo "Approved Spanish smoke keyword accepted: $KEYWORD_ID."
+          echo "Script preflight will verify article/keyword linkage, unpublished WP fields, disabled global ES gate, and detectable QA reason before writes."
 
       - name: Regenerate one Spanish draft
         env:
