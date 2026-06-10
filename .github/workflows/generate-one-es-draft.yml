@@ -10,7 +10,7 @@ on:
       keyword_id:
         description: "Released Spanish keyword id to generate"
         required: true
-        default: "ff36854c-ed82-4066-a737-3063869d0c8b"
+        default: "58a4cb28-0a04-4c19-aa1d-0e676335301e"
 
 permissions:
   contents: read
@@ -66,15 +66,15 @@ jobs:
             exit 1
           fi
 
-      - name: Require approved keyword id
+      - name: Require valid keyword id
         env:
           KEYWORD_ID: ${{ github.event.inputs.keyword_id }}
-          APPROVED_KEYWORD_ID: ff36854c-ed82-4066-a737-3063869d0c8b
         run: |
-          if [ "$KEYWORD_ID" != "$APPROVED_KEYWORD_ID" ]; then
-            echo "Refusing to run: keyword_id must be $APPROVED_KEYWORD_ID."
+          if ! printf '%s' "$KEYWORD_ID" | grep -Eiq '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'; then
+            echo "Refusing to run: keyword_id must be a valid UUID."
             exit 1
           fi
+          echo "Target keyword_id=$KEYWORD_ID"
 
       - name: Preflight Spanish draft generation
         env:

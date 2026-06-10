@@ -11,6 +11,10 @@ on:
         description: "Successful WordPress Language Bridge Probe run id"
         required: true
         default: "27241516739"
+      keyword_id:
+        description: "Exact es_hold Spanish keyword id to release"
+        required: true
+        default: "58a4cb28-0a04-4c19-aa1d-0e676335301e"
 
 permissions:
   contents: read
@@ -61,11 +65,22 @@ jobs:
             exit 1
           fi
 
+      - name: Validate target keyword id
+        env:
+          KEYWORD_ID: ${{ github.event.inputs.keyword_id }}
+        run: |
+          if ! printf '%s' "$KEYWORD_ID" | grep -Eiq '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'; then
+            echo "Refusing to run: keyword_id must be a valid UUID."
+            exit 1
+          fi
+          echo "Target keyword_id=$KEYWORD_ID"
+
       - name: Release one Spanish keyword
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           BRIDGE_RUN_ID: ${{ github.event.inputs.bridge_run_id }}
+          KEYWORD_ID: ${{ github.event.inputs.keyword_id }}
         run: |
-          echo "Running controlled release: max 1 Spanish keyword, no article publishing, spanish_pipeline_enabled unchanged."
-          node scripts/release-es-keywords.js --limit 1 --go --bridge-run-id "$BRIDGE_RUN_ID"
+          echo "Running controlled release: exact Spanish keyword, max 1, no article publishing, spanish_pipeline_enabled unchanged."
+          node scripts/release-es-keywords.js --limit 1 --go --bridge-run-id "$BRIDGE_RUN_ID" --keyword-id "$KEYWORD_ID"
