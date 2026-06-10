@@ -1,0 +1,71 @@
+name: Release One Spanish Keyword
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_release:
+        description: "Type RELEASE_ONE_ES_KEYWORD to release one Spanish keyword"
+        required: true
+        default: ""
+      bridge_run_id:
+        description: "Successful WordPress Language Bridge Probe run id"
+        required: true
+        default: "27241516739"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-one-es-keyword
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Release one Spanish keyword
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Require main branch
+        run: |
+          if [ "$GITHUB_REF_NAME" != "main" ]; then
+            echo "Refusing to run: this workflow must be dispatched from main."
+            exit 1
+          fi
+
+      - name: Require explicit release confirmation
+        env:
+          CONFIRM_RELEASE: ${{ github.event.inputs.confirm_release }}
+        run: |
+          if [ "$CONFIRM_RELEASE" != "RELEASE_ONE_ES_KEYWORD" ]; then
+            echo "Refusing to run: confirm_release must be RELEASE_ONE_ES_KEYWORD."
+            exit 1
+          fi
+
+      - name: Validate bridge run id
+        env:
+          BRIDGE_RUN_ID: ${{ github.event.inputs.bridge_run_id }}
+        run: |
+          if ! printf '%s' "$BRIDGE_RUN_ID" | grep -Eq '^[0-9]+$'; then
+            echo "Refusing to run: bridge_run_id must be numeric."
+            exit 1
+          fi
+
+      - name: Release one Spanish keyword
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          BRIDGE_RUN_ID: ${{ github.event.inputs.bridge_run_id }}
+        run: |
+          echo "Running controlled release: max 1 Spanish keyword, no article publishing, spanish_pipeline_enabled unchanged."
+          node scripts/release-es-keywords.js --limit 1 --go --bridge-run-id "$BRIDGE_RUN_ID"
