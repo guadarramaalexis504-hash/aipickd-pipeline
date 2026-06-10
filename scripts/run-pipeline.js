@@ -30,7 +30,12 @@ const { validateRenderedHtml } = require("./lib/html-validator");
 const { ping: hcPing } = require("./lib/heartbeat");
 const { warmUp } = require("./lib/warmup");
 const { buildSchemas, renderSchemaBlock, NICHE_TO_CATEGORY_SLUG } = require("./lib/schema");
-const { filterPipelineKeywords, keywordStateForArticle, normalizeLanguage } = require("./lib/spanish-gate");
+const { keywordStateForArticle, normalizeLanguage } = require("./lib/spanish-gate");
+const {
+  buildQueuedKeywordEndpoint,
+  parseOnlyKeywordId,
+  selectPipelineKeywords,
+} = require("./lib/pipeline-keywords");
 const {
   AI_TELL_PHRASES,
   cleanupAiTellPhrases,
@@ -82,6 +87,7 @@ const args = process.argv.slice(2);
 const GEN_COUNT = parseInt(args[args.indexOf("--gen") + 1]) || (args.includes("--no-gen") ? 0 : 1);
 const DO_PUBLISH = !args.includes("--no-pub");
 const INCLUDE_ES = args.includes("--include-es");
+const ONLY_KEYWORD_ID = parseOnlyKeywordId(args);
 let spanishPipelineEnabled = false;
 const FORBIDDEN_AI_TELL_LIST = AI_TELL_PHRASES.map((phrase) => `"${phrase}"`).join(", ");
 
@@ -460,17 +466,24 @@ async function generateOne() {
     }
   } catch {}
 
-  // Fetch top 5 queued keywords — sorted by priority DESC, then search_volume DESC
+  // Fetch queued keywords. In controlled smoke mode, query only the requested
+  // keyword so priority order can never pick an unrelated queued row.
   const rawKeywords = await supa(
     "GET",
-    "keywords?status=eq.queued&assigned_article_id=is.null&order=priority.desc,search_volume.desc&limit=50&select=*,niche:niches(slug,name)"
+    buildQueuedKeywordEndpoint({ onlyKeywordId: ONLY_KEYWORD_ID })
   );
-  const keywords = filterPipelineKeywords(rawKeywords || [], {
+  const keywords = selectPipelineKeywords(rawKeywords || [], {
     includeEs: INCLUDE_ES,
     spanishPipelineEnabled,
+    onlyKeywordId: ONLY_KEYWORD_ID,
   });
   if (!keywords || keywords.length === 0) {
-    return { skipped: true, reason: "No queued keywords after language gate" };
+    return {
+      skipped: true,
+      reason: ONLY_KEYWORD_ID
+        ? `Only keyword ${ONLY_KEYWORD_ID} was not queued, unassigned, or allowed by the language gate`
+        : "No queued keywords after language gate",
+    };
   }
   // (sortedKeywords is built below after overload check)
 
@@ -1952,6 +1965,7 @@ function startSoftTimeoutWarning(label = "pipeline") {
   console.log(`  AIPickd Pipeline Run — ${runStart.toISOString()}`);
   console.log(`  Config: AUTO_PUBLISH=${AUTO_PUBLISH} → WP status=${WP_STATUS}`);
   console.log(`          Generate ${GEN_COUNT}, Publish=${DO_PUBLISH}`);
+  if (ONLY_KEYWORD_ID) console.log(`          Only keyword: ${ONLY_KEYWORD_ID}`);
   console.log("══════════════════════════════════════════════════════\n");
 
   // ── Pause-flag check ──────────────────────────────────────────────────
@@ -1999,10 +2013,16 @@ function startSoftTimeoutWarning(label = "pipeline") {
   // workflow's `concurrency: aipickd-mutations / cancel-in-progress: false`
   // guarantees no other run is touching them right now, so it's safe to reset.
   try {
-    const orphans = await supa("GET", "keywords?status=eq.in_progress&select=id,keyword");
+    const orphanEndpoint = ONLY_KEYWORD_ID
+      ? `keywords?id=eq.${encodeURIComponent(ONLY_KEYWORD_ID)}&status=eq.in_progress&select=id,keyword`
+      : "keywords?status=eq.in_progress&select=id,keyword";
+    const orphans = await supa("GET", orphanEndpoint);
     if (Array.isArray(orphans) && orphans.length > 0) {
       console.log(`${ts()} 🔓 Found ${orphans.length} orphan keyword(s) stuck in_progress — resetting to queued`);
-      await supa("PATCH", "keywords?status=eq.in_progress", { status: "queued" });
+      const patchEndpoint = ONLY_KEYWORD_ID
+        ? `keywords?id=eq.${encodeURIComponent(ONLY_KEYWORD_ID)}&status=eq.in_progress`
+        : "keywords?status=eq.in_progress";
+      await supa("PATCH", patchEndpoint, { status: "queued" });
     }
   } catch (e) {
     console.log(`${ts()} ⚠️  Orphan unstucker failed: ${e.message.slice(0, 100)}`);
@@ -2085,56 +2105,60 @@ function startSoftTimeoutWarning(label = "pipeline") {
     }
   }
 
-  // --- Niche diversity check — alert if 3+ articles from same niche today ---
-  try {
-    const today = new Date().toISOString().slice(0, 10);
-    const todayPublished = await supa("GET", `articles?published_at=gte.${today}&status=eq.published&select=niche_id,niche:niches(name)`);
-    if (Array.isArray(todayPublished) && todayPublished.length >= 3) {
-      const nicheCounts = {};
-      todayPublished.forEach(a => {
-        const name = a.niche?.name || a.niche_id || "unknown";
-        nicheCounts[name] = (nicheCounts[name] || 0) + 1;
-      });
-      const overloaded = Object.entries(nicheCounts).filter(([, c]) => c >= 3);
-      if (overloaded.length > 0) {
-        const msg = overloaded.map(([n, c]) => `• ${n}: ${c} artículos`).join("\n");
+  if (ONLY_KEYWORD_ID) {
+    console.log("🎛️  Single-keyword mode: skipping unrelated post-generation maintenance checks.");
+  } else {
+    // --- Niche diversity check — alert if 3+ articles from same niche today ---
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const todayPublished = await supa("GET", `articles?published_at=gte.${today}&status=eq.published&select=niche_id,niche:niches(name)`);
+      if (Array.isArray(todayPublished) && todayPublished.length >= 3) {
+        const nicheCounts = {};
+        todayPublished.forEach(a => {
+          const name = a.niche?.name || a.niche_id || "unknown";
+          nicheCounts[name] = (nicheCounts[name] || 0) + 1;
+        });
+        const overloaded = Object.entries(nicheCounts).filter(([, c]) => c >= 3);
+        if (overloaded.length > 0) {
+          const msg = overloaded.map(([n, c]) => `• ${n}: ${c} artículos`).join("\n");
+          notifyAlert(
+            `🎯 **Concentración de nicho detectada hoy:**\n${msg}\n\nConsiderar diversificar keywords en la cola.`,
+            "info"
+          ).catch(() => {});
+        }
+      }
+    } catch {}
+
+    // --- Keyword queue health check (critical alert at < 20) ---
+    try {
+      const queuedKwRes = await supa("GET", "keywords?status=eq.queued&select=id");
+      const queueCount = Array.isArray(queuedKwRes) ? queuedKwRes.length : 0;
+      console.log(`📋 Keywords in queue: ${queueCount}`);
+      if (queueCount < 20) {
         notifyAlert(
-          `🎯 **Concentración de nicho detectada hoy:**\n${msg}\n\nConsiderar diversificar keywords en la cola.`,
-          "info"
+          `🚨 **CRÍTICO: Cola de keywords muy baja: ${queueCount} restantes**\nEl pipeline se quedará sin contenido en ~${queueCount * 4} horas.\nCorrer: \`node scripts/auto-keywords.js --force --count 50\``,
+          "critical"
+        ).catch(() => {});
+      } else if (queueCount < 30) {
+        notifyAlert(
+          `📋 **Cola de keywords baja: ${queueCount} restantes**\nEl pipeline se va a quedar sin contenido pronto. auto-keywords.js correrá automáticamente en el próximo run.`,
+          "warning"
         ).catch(() => {});
       }
-    }
-  } catch {}
+    } catch {}
 
-  // --- Keyword queue health check (critical alert at < 20) ---
-  try {
-    const queuedKwRes = await supa("GET", "keywords?status=eq.queued&select=id");
-    const queueCount = Array.isArray(queuedKwRes) ? queuedKwRes.length : 0;
-    console.log(`📋 Keywords in queue: ${queueCount}`);
-    if (queueCount < 20) {
-      notifyAlert(
-        `🚨 **CRÍTICO: Cola de keywords muy baja: ${queueCount} restantes**\nEl pipeline se quedará sin contenido en ~${queueCount * 4} horas.\nCorrer: \`node scripts/auto-keywords.js --force --count 50\``,
-        "critical"
-      ).catch(() => {});
-    } else if (queueCount < 30) {
-      notifyAlert(
-        `📋 **Cola de keywords baja: ${queueCount} restantes**\nEl pipeline se va a quedar sin contenido pronto. auto-keywords.js correrá automáticamente en el próximo run.`,
-        "warning"
-      ).catch(() => {});
-    }
-  } catch {}
-
-  // --- Auto-archive qa_failed articles older than 7 days ---
-  try {
-    const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString();
-    const archived = await supa(
-      "PATCH",
-      `articles?status=eq.qa_failed&created_at=lt.${sevenDaysAgo}`,
-      { status: "archived" }
-    );
-    const archivedCount = Array.isArray(archived) ? archived.length : 0;
-    if (archivedCount > 0) console.log(`🗄️  Archived ${archivedCount} old qa_failed articles`);
-  } catch {}
+    // --- Auto-archive qa_failed articles older than 7 days ---
+    try {
+      const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString();
+      const archived = await supa(
+        "PATCH",
+        `articles?status=eq.qa_failed&created_at=lt.${sevenDaysAgo}`,
+        { status: "archived" }
+      );
+      const archivedCount = Array.isArray(archived) ? archived.length : 0;
+      if (archivedCount > 0) console.log(`🗄️  Archived ${archivedCount} old qa_failed articles`);
+    } catch {}
+  }
 
   // All post-publish hooks ran. Final granular ping — if this is missing
   // but PUBLISH was hit, we know the failure is in poststeps (sitemap,
