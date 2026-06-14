@@ -21,6 +21,10 @@ on:
         default: "false"
         type: choice
         options: ["false", "true"]
+      only:
+        description: "Publish exactly one draft by article id (controlled go-live)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -66,4 +70,6 @@ jobs:
         run: |
           WRITE=""
           if [ "${{ github.event.inputs.go }}" = "true" ]; then WRITE="--go"; fi
-          node scripts/publish-pending-drafts.js --limit "${{ github.event.inputs.limit || '5' }}" $WRITE
+          ONLY=""
+          if [ -n "${{ github.event.inputs.only }}" ]; then ONLY="--only ${{ github.event.inputs.only }}"; fi
+          node scripts/publish-pending-drafts.js --limit "${{ github.event.inputs.limit || '5' }}" $WRITE $ONLY
