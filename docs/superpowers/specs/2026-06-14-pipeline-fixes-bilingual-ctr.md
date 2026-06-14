@@ -55,13 +55,42 @@ Contexto crítico descubierto: el `main` local estaba **13 commits atrás** de
 4. Si OK → `spanish_pipeline_enabled=true` + liberar los 7 `es_hold`.
 5. Títulos ES con gancho (ángulo "probé X y esta ganó") per BILINGUAL-PLAN.md.
 
-## Track C — CTR + impresiones (exhaustivo)
+## Track C — CTR + impresiones
 
-Seguir fases 2-7 de IMPRESSIONS-CTR-ROADMAP.md + ideas nuevas. Se irá expandiendo
-en este doc conforme se generen y prioricen ideas. Cada idea = commit enfocado +
-verificación. Áreas: categorización, hubs/pilares, E-E-A-T/autor, Discover,
-rich results, GSC data-driven, títulos/meta, internal linking, frescura, e
-i18n como palanca de impresiones.
+### Hecho esta sesión
+- **"Related articles" block** (lib + CLI + workflow + tests). Aplicado a 170/173
+  artículos. Internal links → impresiones + dwell. Cron semanal lo mantiene.
+- (Track B) Calidad ES → desbloquea el mercado Latam, la mayor palanca de
+  impresiones sin tocar EN.
+
+### Ya vivo en el sistema (crons)
+Title refresh (CTR, prioritizado por GSC), meta descriptions (100%), schema
+backfill (~87% ciclando), FAQ schema, IndexNow, image gen, categorize,
+breadcrumbs (schema), citation capsules GEO/AEO en el prompt.
+
+### Backlog priorizado (ideas restantes)
+**Alto impacto / bajo esfuerzo**
+1. **Activar `/es/`** (flush de permalinks) — palanca #1 de impresiones. *Paso del usuario.*
+2. **Byline "Updated [Mes Año]" visible** — señal de frescura (CTR + rankings). Verificado ausente.
+3. **Alt text con keyword** en imágenes destacadas — impresiones en Google Images.
+4. **Backfill de las 8 imágenes faltantes** + recuperar 11 EN + 1 ES `qa_failed`.
+5. **Fix hook internal-links no-op**: el post-publish corre en DRY (sin `--go`) → no aplica. Confirmar si los links vienen de la generación o engancharlo bien.
+
+**Alto impacto / esfuerzo medio**
+6. **Página de autor + Person/Organization schema** (E-E-A-T) → rankings + knowledge panel.
+7. **Hubs por categoría + pilar "Best AI Tools 2026"** (hub-and-spoke) → impresiones.
+8. **Google Indexing API** → indexación más rápida de artículos nuevos.
+9. **News-sitemap + Google Discover** (imágenes grandes ✅, frescura, títulos provocativos ✅).
+10. **Review stars COMPLIANT**: Review schema por-producto en listicles/comparativas (ratings editoriales), siguiendo la política de Google (no `aggregateRating` falso a nivel página — el código ya lo evita bien).
+
+**Infra / mantenimiento**
+11. **Node 20 → 24** en workflows (deprecación 2026-06-16).
+12. **Cloudflare** enfrente de Hostinger (CWV + mata cold-starts de raíz). *DNS del usuario.*
+13. Aplicar migración `monitor_state` (activa el anti-flap A2).
+
+**Bilingüe (después de validar /es/)**
+14. Traducir ganadores ES → gemelos EN (Fase 4 de BILINGUAL-PLAN), por datos GSC.
+15. Regenerar los 4 ES `qa_failed` con el prompt mejorado + liberar los 7 `es_hold`.
 
 ---
 
