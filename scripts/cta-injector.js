@@ -25,6 +25,7 @@
 const { loadEnv } = require("./lib/env");
 const { buildLocalizedCta } = require("./lib/cta");
 const { normalizeLanguage } = require("./lib/spanish-gate");
+const { isTransientNetworkError } = require("./lib/http");
 const env = loadEnv();
 
 const {
@@ -461,6 +462,10 @@ async function discordAlert(message) {
     await discordAlert(lines.join("\n"));
   }
 })().catch((e) => {
+  if (isTransientNetworkError(e)) {
+    console.error(`⏭️  cta-injector skipped: WordPress unreachable (transient): ${e.message}`);
+    process.exit(0);
+  }
   console.error("\nFATAL:", e.message);
   console.error(e.stack);
   process.exit(1);

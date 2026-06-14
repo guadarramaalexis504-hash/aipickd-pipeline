@@ -206,4 +206,23 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-module.exports = { fetchWithRetry, parseRetryAfter, assertHostAllowed };
+/**
+ * True if an error is a TRANSIENT network/timeout failure (Hostinger cold-start
+ * or blip) rather than a real config/auth/logic error. Maintenance scripts use
+ * this to skip quietly (exit 0, no Discord alert) on a passing infra blip instead
+ * of crying "failed" — a single Hostinger outage was firing a cluster of alerts.
+ * Auth failures (401/403) are explicitly NOT transient.
+ */
+function isTransientNetworkError(err) {
+  if (!err) return false;
+  if (err.status === 401 || err.status === 403) return false;
+  const code = err.code || "";
+  return (
+    err.name === "AbortError" ||
+    err.name === "TypeError" || // undici "fetch failed"
+    /fetch failed|network|timeout|socket hang up|ECONNRESET|terminated/i.test(err.message || "") ||
+    ["ECONNRESET", "ECONNREFUSED", "ETIMEDOUT", "EAI_AGAIN", "ENOTFOUND", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_SOCKET"].includes(code)
+  );
+}
+
+module.exports = { fetchWithRetry, parseRetryAfter, assertHostAllowed, isTransientNetworkError };

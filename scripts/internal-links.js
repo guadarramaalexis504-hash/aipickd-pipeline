@@ -20,6 +20,7 @@
 const { loadEnv } = require('./lib/env');
 const { hasWriteFlag } = require("./lib/cli-safety");
 const { filterCandidatesByLanguage, buildRelatedBlock } = require("./lib/internal-linking");
+const { isTransientNetworkError } = require("./lib/http");
 const env = loadEnv();
 
 const args     = process.argv.slice(2);
@@ -180,6 +181,10 @@ function hasRelatedBlock(html) {
     }).catch(() => {});
   }
 })().catch(e => {
+  if (isTransientNetworkError(e)) {
+    console.error(`⏭️  internal-links skipped: WordPress unreachable (transient): ${e.message}`);
+    process.exit(0);
+  }
   console.error('❌ ERROR:', e.message);
   process.exit(1);
 });

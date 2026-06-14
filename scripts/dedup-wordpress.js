@@ -23,6 +23,7 @@ const { supa, wp } = require("./lib/clients");
 
 const env = loadEnv();
 const { warmUp } = require("./lib/warmup");
+const { isTransientNetworkError } = require("./lib/http");
 const { DISCORD_WEBHOOK_ALERTAS } = env;
 
 const FIX_MODE = process.argv.includes("--fix");
@@ -177,6 +178,12 @@ const baseSlug = (slug) => slug.replace(/-\d{1,3}$/, "");
 
   log("\n✅ WordPress limpio.");
 })().catch(async (e) => {
+  // A transient Hostinger blip (fetch failed/timeout) isn't a real dedup failure
+  // — skip quietly so one outage doesn't blast #alertas. dedup runs every cycle.
+  if (isTransientNetworkError(e)) {
+    console.error(`⏭️  dedup-wordpress skipped: WordPress unreachable (transient): ${e.message}`);
+    process.exit(0);
+  }
   console.error("❌ ERROR:", e.message);
   await notifyAlert(`❌ dedup-wordpress falló: ${e.message}`).catch(() => {});
   process.exit(1);
