@@ -31,6 +31,7 @@ const { ping: hcPing } = require("./lib/heartbeat");
 const { warmUp } = require("./lib/warmup");
 const { buildSchemas, renderSchemaBlock, NICHE_TO_CATEGORY_SLUG } = require("./lib/schema");
 const { keywordStateForArticle, normalizeLanguage } = require("./lib/spanish-gate");
+const { SPANISH_TITLE_BLOCK, SPANISH_META_BLOCK } = require("./lib/spanish-ctr");
 const {
   buildQueuedKeywordEndpoint,
   parseOnlyKeywordId,
@@ -604,7 +605,7 @@ CRITICAL: All references must be 2026. If the keyword has a year, use 2026. Neve
 CRITICAL: The outline MUST have at least 10 H2 sections. Each section must have word_target >= 250. Total word_targets must sum to 3000+.
 CRITICAL: Include a dedicated "FAQ" section as the last H2 with 6 substantive questions.
 
-TITLE ENGINEERING — the single biggest CTR lever (a flat title = zero clicks). Research-backed (Backlinko, Copyblogger):
+${ES ? `${SPANISH_TITLE_BLOCK}\n\n${SPANISH_META_BLOCK}\n\n(Las reglas de TITLE ENGINEERING y de meta en ingles de abajo NO aplican a este articulo en espanol — usa solo las de arriba.)\n\n` : ""}TITLE ENGINEERING — the single biggest CTR lever (a flat title = zero clicks). Research-backed (Backlinko, Copyblogger):
 - 40-60 chars (highest SERP CTR). Front-load the hook; include the primary keyword naturally; END with the year (2026 / (2026) / [2026]).
 - Numbers lift CTR ~36% — use a SPECIFIC number when it fits (7, 9, $0, "30 Days", "20 Tested").
 - Use 2-3 TRUST power words: Honest, Tested, Proven, Actually Work, Worth It, Real, Ranked, Data-Backed.
