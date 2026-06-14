@@ -187,8 +187,9 @@ for (const c of checks) {
         failed++;
       }
     } catch (e) {
-      console.error(`  ❌ WordPress auth probe: ${e.message}`);
-      failed++;
+      // A thrown fetch error = network/timeout (Hostinger unreachable), NOT a bad
+      // secret. Warn but do NOT fail secret validation on a transient blip.
+      console.error(`  ⚠️  WordPress auth probe could not reach WP (network, not a secret problem): ${e.message}`);
     }
   }
 

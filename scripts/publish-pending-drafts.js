@@ -184,14 +184,27 @@ function mdToHtml(md) {
       await wpReq("GET", "users/me?context=edit");
       console.log(`${ts()} ✅ WP auth OK`);
     } catch (e) {
-      console.error(`${ts()} ❌ WP auth FAILED: ${e.message}`);
-      notifyAlert(
-        `🚨 **publish-pending-drafts pre-flight failed**\n` +
-        `WP auth returned ${e.status || "?"}.\n` +
-        `Action: regenerate the Application Password at \`/wp-admin/profile.php\` and update \`WP_ADMIN_PASSWORD\` in GitHub Secrets.\n` +
-        `Error: \`${e.message?.slice(0, 200)}\``,
-        "critical"
-      ).catch(() => {});
+      const isAuth = e.status === 401 || e.status === 403;
+      if (isAuth) {
+        console.error(`${ts()} ❌ WP auth FAILED (${e.status}): ${e.message}`);
+        notifyAlert(
+          `🚨 **publish-pending-drafts pre-flight failed**\n` +
+          `WP auth returned ${e.status}.\n` +
+          `Action: regenerate the Application Password at \`/wp-admin/profile.php\` and update \`WP_ADMIN_PASSWORD\` in GitHub Secrets.\n` +
+          `Error: \`${e.message?.slice(0, 200)}\``,
+          "critical"
+        ).catch(() => {});
+      } else {
+        // No HTTP status reached = network/timeout (Hostinger cold-start or blip),
+        // NOT an auth problem. Don't tell the user to rotate a working password.
+        console.error(`${ts()} ⚠️  WP unreachable (network, not auth): ${e.message}`);
+        notifyAlert(
+          `⚠️ **publish-pending-drafts skipped: WordPress unreachable**\n` +
+          `Network error reaching WP (likely a Hostinger cold-start/blip) — this is NOT an auth problem, the password is fine. Drafts will publish on the next run.\n` +
+          `Error: \`${(e.message || "").slice(0, 200)}\``,
+          "warning"
+        ).catch(() => {});
+      }
       process.exitCode = 3;
       return;
     }
