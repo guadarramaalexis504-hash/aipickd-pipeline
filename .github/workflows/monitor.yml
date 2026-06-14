@@ -30,15 +30,6 @@ jobs:
           discord-webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
           discord-webhook-alertas: ${{ secrets.DISCORD_WEBHOOK_ALERTAS }}
 
-      - name: Cache Playwright browsers
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-${{ hashFiles('package.json') }}
-
-      - name: Install Playwright Chromium
-        run: npx playwright install chromium --with-deps
-
       - name: Run site monitor (alert-only mode)
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
