@@ -118,10 +118,11 @@ function extractHowToSteps(md) {
     });
   }
 
-  // Require the explicit word "Step N" — bare "1." headings are ambiguous
-  // (often ranked tool lists, e.g. "1. Synthesia") and would pollute the
-  // procedure. Strictness is correct here: emit HowTo only when certain.
-  const stepLabelRe = /^step\s*\d+\s*[:.)\-–—]?\s+(.+)$/i;
+  // Require the explicit word "Step N" / "Paso N" — bare "1." headings are
+  // ambiguous (often ranked tool lists, e.g. "1. Synthesia") and would pollute
+  // the procedure. Strictness is correct here: emit HowTo only when certain.
+  // "Paso N" included so Spanish how-to articles also get HowTo rich results.
+  const stepLabelRe = /^(?:step|paso)\s*\d+\s*[:.)\-–—]?\s+(.+)$/i;
   const steps = [];
   for (let i = 0; i < heads.length; i++) {
     const labelMatch = heads[i].text.match(stepLabelRe);

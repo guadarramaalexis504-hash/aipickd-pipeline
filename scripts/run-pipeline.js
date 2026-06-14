@@ -31,7 +31,7 @@ const { ping: hcPing } = require("./lib/heartbeat");
 const { warmUp } = require("./lib/warmup");
 const { buildSchemas, renderSchemaBlock, NICHE_TO_CATEGORY_SLUG } = require("./lib/schema");
 const { keywordStateForArticle, normalizeLanguage } = require("./lib/spanish-gate");
-const { SPANISH_TITLE_BLOCK, SPANISH_META_BLOCK } = require("./lib/spanish-ctr");
+const { SPANISH_TITLE_BLOCK, SPANISH_META_BLOCK, spanishSlugify } = require("./lib/spanish-ctr");
 const {
   buildQueuedKeywordEndpoint,
   parseOnlyKeywordId,
@@ -887,7 +887,8 @@ Return JSON: { "variants": ["Title 1", "Title 2"] }`,
       keyword_id: kw.id,
       niche_id: kw.niche_id,
       title: outline.title,
-      slug: outline.slug,
+      // Spanish titles carry accents/ñ; never let them leak into the URL slug.
+      slug: ES ? spanishSlugify(outline.slug || outline.title) : outline.slug,
       meta_description: outline.meta_description,
       content_markdown: linked,
       article_type: correctedType || outline.article_type,

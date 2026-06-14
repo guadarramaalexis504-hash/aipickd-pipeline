@@ -50,6 +50,31 @@ test("buildBreadcrumb localizes Home -> Inicio for Spanish", () => {
   assert.equal(en.itemListElement[0].name, "Home");
 });
 
+test("buildSchemas emits HowTo for a Spanish how-to with 'Paso N' steps", () => {
+  const md = `# Como usar Make.com en 2026
+
+## Paso 1: Crea tu cuenta
+Entra al sitio y registra una cuenta gratuita con tu correo para empezar de inmediato.
+
+## Paso 2: Conecta tu primera app
+Elige la aplicacion que quieres automatizar y autoriza el acceso desde el panel.
+
+## Paso 3: Crea tu escenario
+Arrastra los modulos, define el disparador y prueba el flujo antes de activarlo.
+
+## Preguntas frecuentes
+### ¿Make.com es gratis?
+Tiene un plan gratuito con operaciones limitadas y planes de pago para mas volumen.`;
+  const schemas = buildSchemas(
+    { title: "Como usar Make.com en 2026", language: "es", article_type: "how-to", content_markdown: md, meta_description: "Guia paso a paso." },
+    { url: "https://aipickd.com/es/como-usar-make-2026/" }
+  );
+  const types = schemas.map((s) => s["@type"]);
+  assert.ok(types.includes("HowTo"), `expected HowTo, got ${types.join(",")}`);
+  const howto = schemas.find((s) => s["@type"] === "HowTo");
+  assert.equal(howto.step.length, 3);
+});
+
 test("English FAQ extraction still works (no regression)", () => {
   const md = `## FAQ
 
