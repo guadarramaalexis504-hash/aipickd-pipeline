@@ -94,6 +94,36 @@ breadcrumbs (schema), citation capsules GEO/AEO en el prompt.
 
 ---
 
+## Track D — CTR + impresiones del ESPAÑOL (goal 2)
+
+Sistema CTR español diseñado por workflow multi-agente (15 agentes, research +
+judged) e implementado. Causa raíz: toda la ingeniería de títulos/meta del prompt
+estaba en inglés y sangraba a ambos idiomas.
+
+### Hecho + verificado
+- **`scripts/lib/spanish-ctr.js`**: `SPANISH_TITLE_BLOCK` (longitud 50-55 char por
+  verbosidad ES + truncado píxel móvil ~475px, keyword al frente, números, power
+  words Latam, fórmulas por tipo, bans de clickbait/claims falsos per spam-update
+  Google oct-2025) + `SPANISH_META_BLOCK` (benefit-first, CTA Latam, 1 emoji máx) +
+  `spanishSlugify()`. Inyectado en el outline prompt SOLO cuando es ES.
+- **FAQPage rich results ES** (`extractFAQs` ahora matchea "Preguntas frecuentes")
+  — backfilleado + verificado en vivo (6 preguntas). Afecta a TODOS los ES.
+- **HowTo rich results ES** (`extractHowToSteps` ahora matchea "Paso N").
+- **Breadcrumb "Inicio"** (localizado ES).
+- **Alt text** keyword-rich en imágenes (localizado vía título ES → Google Imágenes).
+- **Slug ES sin acentos** (`spanishSlugify` wireado en la creación del draft).
+- (Track C) list-count title repair + related articles (incl. ES) + IndexNow ES ✅.
+
+### Backlog ES CTR (necesita prerequisitos / más esfuerzo)
+- **Freshness visible "Actualizado [mes] 2026"**: necesita mecanismo de refresh
+  para no quedar stale (sin él es liability). dateModified ya está en schema.
+- **Hubs de categoría ES** (/es/comparativas/, /es/resenas/...): prematuro con
+  solo 1-2 artículos ES; construir cuando haya contenido ES que agregar.
+- **hreflang recíproco EN↔ES**: cuando existan gemelos EN (Fase 4 de BILINGUAL).
+- **Refresh tool de títulos/meta ES** (data-driven GSC): bajo valor hoy (1-2 ES,
+  sin data GSC ES aún); importa a escala.
+- **Calidad de generación de listicles ES** (placeholders): tarea de fondo creada.
+
 ## Reglas de ejecución
 - Push directo a main, en batches enfocados, validados con `npm run validate`.
 - Reportar cada batch al usuario en Discord/respuesta.
