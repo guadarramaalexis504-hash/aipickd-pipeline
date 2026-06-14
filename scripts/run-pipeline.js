@@ -1188,6 +1188,13 @@ async function generateFeaturedImage(title, slug, postId, articleType = "article
     });
     const uploadData = await uploadRes.json();
     if (!uploadRes.ok) throw new Error(`WP upload: ${uploadRes.status}`);
+    // Keyword-rich alt text → Google Images impressions + accessibility/E-E-A-T.
+    // The article title is already keyword-rich and localized (Spanish for /es/).
+    if (title) {
+      await wp("POST", `media/${uploadData.id}`, {
+        alt_text: String(title).replace(/\s+/g, " ").trim().slice(0, 125),
+      }).catch(() => {});
+    }
     await wp("POST", `posts/${postId}`, { featured_media: uploadData.id });
     return uploadData.source_url;
   }
