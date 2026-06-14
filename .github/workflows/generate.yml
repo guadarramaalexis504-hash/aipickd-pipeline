@@ -154,7 +154,7 @@ jobs:
       - name: Add internal links to newly published articles
         id: post-internal-links
         continue-on-error: true
-        run: node scripts/internal-links.js --hours 6
+        run: node scripts/internal-links.js --hours 6 --go
 
       - name: Inject CTA buttons + reading time into new articles
         id: post-cta

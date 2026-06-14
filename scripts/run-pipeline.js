@@ -2179,20 +2179,11 @@ function startSoftTimeoutWarning(label = "pipeline") {
       ).catch(() => {});
     }
 
-    // Auto-add internal links to new articles (post-publish hook)
+    // Internal links are applied by the generate.yml post-step
+    // (internal-links.js --hours 6 --go) — language-aware and idempotent. The old
+    // in-pipeline add-internal-links.js call here ran WITHOUT --go (a silent
+    // no-op) and is removed to avoid the misleading "links added" impression.
     if (published > 0) {
-      console.log(`🔗 INTERNAL LINKS (auto-link new articles to existing)`);
-      try {
-        const { spawnSync } = require("child_process");
-        const r = spawnSync(process.execPath, [path.join(__dirname, "add-internal-links.js")], {
-          stdio: "inherit",
-          timeout: 5 * 60 * 1000,
-        });
-        if (r.status !== 0) console.log(`   ⚠️  internal-links exited ${r.status}`);
-      } catch (e) {
-        console.log(`   ⚠️  internal-links failed: ${e.message.slice(0, 80)}`);
-      }
-
       // Ping sitemap after publishing (async, non-blocking)
       try {
         const sitemapUrl = `https://www.bing.com/indexnow?url=${encodeURIComponent('https://aipickd.com/sitemap.xml')}&key=${env.INDEXNOW_KEY || 'aipickd2026'}`;
