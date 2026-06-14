@@ -44,6 +44,7 @@ const {
   detectAiTellPhrases,
   formatAiTellIssue,
   formatToolPlaceholderIssue,
+  detectToolPlaceholders,
   repairSpanishResidual,
   repairListCountTitle,
 } = require("./lib/quality");
@@ -819,6 +820,44 @@ Rules: Start with "## FAQ" heading. Each question as "###" sub-heading. Each ans
     const aiTellScrub = await scrubAiTellsForQa(finalText, `generated:${outline.slug}`);
     if (aiTellScrub.usage) totalCost += estimateCost("gpt-4o-mini", aiTellScrub.usage);
     finalText = aiTellScrub.text;
+
+    // Placeholder rescue: the prompt bans generic placeholders, but the model
+    // occasionally still leaves "[Herramienta]" / "Tool A" / "[Nombre]" (the #1
+    // Spanish-listicle QA failure). One targeted pass fills them with REAL named
+    // tools relevant to the topic — rescuing the article instead of failing QA.
+    // Only fires when placeholders are actually present, so the cost is bounded.
+    const placeholdersBefore = detectToolPlaceholders(finalText);
+    if (placeholdersBefore.length > 0) {
+      console.log(`${ts()} 🩹 Placeholder rescue: ${placeholdersBefore.length} placeholder(s) — filling with real tool names`);
+      try {
+        const rescueRes = await gpt(
+          "gpt-4o-2024-11-20",
+          ES
+            ? "Eres un editor experto de reseñas de IA. Reemplaza CADA placeholder por una herramienta de IA REAL, con nombre, que exista y sea relevante al tema. Jamas inventes marcas falsas. Conserva TODO lo demas identico (estructura, encabezados, tablas, enlaces, longitud). Devuelve SOLO el markdown completo."
+            : "You are an expert AI-tools review editor. Replace EVERY placeholder with a REAL, specific, named AI tool that exists and is relevant to the topic. Never invent fake brands. Keep EVERYTHING else identical (structure, headings, tables, links, length). Output ONLY the complete markdown.",
+          `${ES ? "Tema" : "Topic"}: ${kw.keyword}\n\n${
+            ES
+              ? "Este articulo dejo placeholders sin llenar (por ejemplo [Herramienta], Tool A, [Nombre], Producto B). Reemplaza CADA uno por una herramienta real con nombre."
+              : "This article left unfilled placeholders (e.g. [Tool], Tool A, [Name], Product B). Replace EACH with a real, named tool."
+          }\n\n${finalText}`,
+          16000
+        );
+        if (rescueRes.usage) totalCost += estimateCost("gpt-4o-2024-11-20", rescueRes.usage);
+        const rescued = (rescueRes.text || "").trim();
+        const after = detectToolPlaceholders(rescued).length;
+        const wordsOk =
+          rescued.split(/\s+/).filter(Boolean).length >=
+          finalText.split(/\s+/).filter(Boolean).length * 0.85;
+        if (rescued && after < placeholdersBefore.length && wordsOk) {
+          finalText = rescued;
+          console.log(`${ts()} 🩹 Placeholder rescue applied (${after} remaining)`);
+        } else {
+          console.log(`${ts()} 🩹 Placeholder rescue kept original (after=${after}, wordsOk=${wordsOk})`);
+        }
+      } catch (e) {
+        console.log(`${ts()} ⚠️  Placeholder rescue failed: ${(e.message || String(e)).slice(0, 60)}`);
+      }
+    }
 
     // Affiliate links
     const affiliates = await supa("GET", "affiliates?status=eq.active");
