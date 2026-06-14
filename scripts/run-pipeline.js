@@ -43,6 +43,7 @@ const {
   detectAiTellPhrases,
   formatAiTellIssue,
   formatToolPlaceholderIssue,
+  repairSpanishResidual,
 } = require("./lib/quality");
 
 /**
@@ -522,7 +523,7 @@ async function generateOne() {
   const LANG = normalizeLanguage(kw.language);
   const ES = LANG === "es";
   GEN_LANG_DIRECTIVE = ES
-    ? `IDIOMA OBLIGATORIO - Escribe ABSOLUTAMENTE TODO en ESPANOL DE MEXICO natural (usa "tu", nunca "usted"), para una audiencia de Latinoamerica. Titulo, slug, encabezados, cuerpo, tablas, FAQ, "Veredicto rapido", "Puntos clave", cada "Dato clave", y la meta description: TODO en espanol. JAMAS uses headings o etiquetas en ingles como "Quick Picks", "Key fact", "Final Verdict", "Pros and Cons", "Pricing", "Features", "Overview", "Best for" o "Use cases". No afirmes que "probamos", "probe", "probadas" o "en proyectos reales" si no hay evidencia real; usa "evaluamos criterios publicos y casos de uso tipicos". Para listicles ES: si el titulo promete 7 herramientas, desarrolla exactamente 7 herramientas reales con nombre, cada una en su propio H2. Cada herramienta debe incluir para que sirve, ejemplo de tarea, precio aproximado o plan, pros, contras y mejor caso de uso. Prohibido dejar placeholders bracketed como "[Herramienta 1]", "[Producto 1]", "[Nombre]", "[Nombre de la app]" o "[Nombre de IA]". Evita cliches y traducciones literales: "en el mundo actual", "sin duda alguna", "es importante destacar", "en conclusion", "descubre el poder", "lleva tu X al siguiente nivel", "en la era digital", "revoluciona". Los titulos deben tener gancho (40-60 caracteres, con numero + "2026"), pero sin prometer pruebas propias no verificadas. Ejemplos validos: "7 IAs para tareas: cual conviene en 2026", "ChatGPT vs Claude vs Gemini: cual explica mejor (2026)", "IA gratis vs de pago: cuando vale pagar (2026)". NUNCA titulos frios como "Mejores herramientas IA 2026".\n\n`
+    ? `IDIOMA OBLIGATORIO - Escribe ABSOLUTAMENTE TODO en ESPANOL DE MEXICO natural (usa "tu", nunca "usted"), para una audiencia de Latinoamerica. Titulo, slug, encabezados, cuerpo, tablas, FAQ, "Veredicto rapido", "Puntos clave", cada "Dato clave", y la meta description: TODO en espanol. JAMAS uses headings o etiquetas en ingles como "Quick Picks", "Key fact", "Final Verdict", "Pros and Cons", "Pricing", "Features", "Overview", "Best for" o "Use cases". No afirmes que "probamos", "probe", "probadas" o "en proyectos reales" si no hay evidencia real; usa "evaluamos criterios publicos y casos de uso tipicos". Para listicles ES: si el titulo promete 7 herramientas, desarrolla exactamente 7 herramientas reales con nombre, cada una en su propio H2. Cada herramienta debe incluir para que sirve, ejemplo de tarea, precio aproximado o plan, pros, contras y mejor caso de uso. Prohibido dejar placeholders bracketed como "[Herramienta 1]", "[Producto 1]", "[Nombre]", "[Nombre de la app]" o "[Nombre de IA]". Evita cliches y traducciones literales: "en el mundo actual", "sin duda alguna", "es importante destacar", "en conclusion", "descubre el poder", "lleva tu X al siguiente nivel", "en la era digital", "revoluciona". Los titulos deben tener gancho (40-60 caracteres, con numero + "2026"), pero sin prometer pruebas propias no verificadas. Ejemplos validos: "7 IAs para tareas: cual conviene en 2026", "ChatGPT vs Claude vs Gemini: cual explica mejor (2026)", "IA gratis vs de pago: cuando vale pagar (2026)". NUNCA titulos frios como "Mejores herramientas IA 2026". ENCABEZADOS/ETIQUETAS OBLIGATORIOS EN ESPAÑOL (usa EXACTAMENTE estos, jamas el equivalente en ingles): "Veredicto rapido" (no "Quick Verdict"), "Puntos clave" (no "Key Takeaways"), "## Preguntas frecuentes" (no "## FAQ"), "Dato clave" (no "Key fact"), "Ventajas"/"Desventajas" (no "Pros"/"Cons"), "Precios" (no "Pricing"), "Caracteristicas" (no "Features"), "Resumen" (no "Overview"), "Casos de uso" (no "Use cases"). FUENTES OBLIGATORIAS: incluye AL MENOS 2 enlaces markdown a fuentes oficiales (la pagina de precios del producto, su blog o documentacion oficial). Si mencionas un numero, porcentaje, estadistica o precio, enlazalo a su fuente entre parentesis; si no tienes una fuente verificable, NO inventes la cifra: descríbelo en palabras (por ejemplo "plan gratuito disponible" en vez de un porcentaje inventado).\n\n`
     : "";
   if (ES) console.log(`${ts()} 🇲🇽 Modo ESPAÑOL activado para este artículo`);
 
@@ -1638,6 +1639,24 @@ async function publishAllDrafts(maxCount = 10) {
           content_markdown: article.content_markdown,
           word_count: article.word_count,
         }).catch(() => {});
+      }
+      // Spanish residual repair: deterministically translate any leaked English
+      // headings/labels (## FAQ → ## Preguntas frecuentes, Quick Verdict →
+      // Veredicto rápido, Pricing → Precios, …) so a cosmetic slip from the
+      // model doesn't fail an otherwise-good Spanish article on QA.
+      if (normalizeLanguage(article.language) === "es") {
+        const esRepair = repairSpanishResidual(article.content_markdown, article.language);
+        if (esRepair.changed) {
+          article.content_markdown = esRepair.text;
+          article.word_count = article.content_markdown.split(/\s+/).filter(Boolean).length;
+          await supa("PATCH", `articles?id=eq.${article.id}`, {
+            content_markdown: article.content_markdown,
+            word_count: article.word_count,
+          }).catch(() => {});
+          console.log(
+            `   🧹 ES residual repair: ${esRepair.replaced.map((r) => `${r.phrase}→${r.to}`).join(", ")}`
+          );
+        }
       }
       qa = qualityGate(article);
     } catch (prepErr) {

@@ -524,6 +524,64 @@ function repairToolPlaceholders(markdown = "", replacements = {}) {
   };
 }
 
+// Deterministic Spanish-residual repair. The generation prompt instructs Spanish
+// headings/labels, but the model occasionally leaks an English one the QA gate
+// then (correctly) blocks (e.g. "## FAQ", "Quick Verdict", "Pricing"). Rather
+// than fail/regenerate a whole article over a cosmetic slip, map the known
+// English labels/headings to Spanish BEFORE QA. Mirrors repairToolPlaceholders.
+// Only the exact patterns the QA gate flags are mapped, and fenced code blocks
+// are left untouched.
+const SPANISH_RESIDUAL_HEADING_MAP = [
+  { phrase: "FAQ", re: /^(\s*#{2,6}\s*)FAQ\s*:?\s*$/gim, to: "$1Preguntas frecuentes" },
+  { phrase: "Pros (heading)", re: /^(\s*#{2,6}\s*)Pros\s*:?\s*$/gim, to: "$1Ventajas" },
+  { phrase: "Cons (heading)", re: /^(\s*#{2,6}\s*)Cons\s*:?\s*$/gim, to: "$1Desventajas" },
+];
+const SPANISH_RESIDUAL_LABEL_MAP = [
+  { phrase: "Pros and Cons", re: /\bPros and Cons\b/g, to: "Ventajas y desventajas" },
+  { phrase: "Quick Picks", re: /\bQuick Picks\b/g, to: "Selección rápida" },
+  { phrase: "Final Verdict", re: /\bFinal Verdict\b/g, to: "Veredicto final" },
+  { phrase: "Quick Verdict", re: /\bQuick Verdict\b/g, to: "Veredicto rápido" },
+  { phrase: "Key Takeaways", re: /\bKey Takeaways\b/g, to: "Puntos clave" },
+  { phrase: "Key fact", re: /\bKey fact\b/g, to: "Dato clave" },
+  { phrase: "Pricing", re: /\bPricing\b/g, to: "Precios" },
+  { phrase: "Features", re: /\bFeatures\b/g, to: "Características" },
+  { phrase: "Overview", re: /\bOverview\b/g, to: "Resumen" },
+  { phrase: "Best for", re: /\bBest for\b/g, to: "Mejor para" },
+  { phrase: "Use cases", re: /\bUse cases\b/g, to: "Casos de uso" },
+];
+
+function repairSpanishResidual(markdown = "", language = "es") {
+  if (normalizeLanguage(language) !== "es") {
+    return { text: String(markdown || ""), changed: false, replaced: [] };
+  }
+  // Split out fenced code blocks so we never rewrite code samples.
+  const segments = String(markdown || "").split(/(```[\s\S]*?```)/g);
+  const replaced = [];
+  const out = segments.map((segment) => {
+    if (segment.startsWith("```")) return segment; // code fence — leave untouched
+    let text = segment;
+    for (const h of SPANISH_RESIDUAL_HEADING_MAP) {
+      let count = 0;
+      text = text.replace(h.re, (...m) => {
+        count += 1;
+        return `${m[1]}${h.to.replace("$1", "")}`;
+      });
+      if (count > 0) replaced.push({ phrase: h.phrase, count, to: h.to.replace("$1", "") });
+    }
+    for (const l of SPANISH_RESIDUAL_LABEL_MAP) {
+      let count = 0;
+      text = text.replace(l.re, () => {
+        count += 1;
+        return l.to;
+      });
+      if (count > 0) replaced.push({ phrase: l.phrase, count, to: l.to });
+    }
+    return text;
+  });
+  const text = out.join("");
+  return { text, changed: text !== String(markdown || ""), replaced };
+}
+
 function formatAiTellIssue(markdown = "") {
   const matches = detectAiTellPhrases(markdown);
   if (matches.length === 0) return null;
@@ -676,6 +734,7 @@ module.exports = {
   formatToolPlaceholderIssue,
   qualityGate,
   repairToolPlaceholders,
+  repairSpanishResidual,
   issueMessages,
   hasFaqSection,
   detectLanguageMismatch,

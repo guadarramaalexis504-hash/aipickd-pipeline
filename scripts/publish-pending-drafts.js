@@ -22,6 +22,7 @@ const { hasWriteFlag } = require("./lib/cli-safety");
 const { validateRenderedHtml } = require("./lib/html-validator");
 const { buildSchemas, renderSchemaBlock, NICHE_TO_CATEGORY_SLUG } = require("./lib/schema");
 const { buildRecoveryPublishPlan } = require("./lib/recovery-publisher");
+const { repairSpanishResidual } = require("./lib/quality");
 const { keywordStateForArticle, normalizeLanguage } = require("./lib/spanish-gate");
 const { notifyAlert } = require("./notify.js");
 const { spawnSync } = require("node:child_process");
@@ -37,6 +38,9 @@ const {
 
 const args = process.argv.slice(2);
 const LIMIT = parseInt(args[args.indexOf("--limit") + 1]) || 5;
+// --only <article_id>: publish exactly one specific draft. Used for the
+// controlled Spanish go-live (verify one /es/ article before enabling the rest).
+const ONLY_ID = args.indexOf("--only") >= 0 ? args[args.indexOf("--only") + 1] : null;
 const DRY_RUN = !hasWriteFlag(args, new Set(["--go"]));
 const HAS_WP_AUTH = Boolean(WP_USERNAME && WP_ADMIN_PASSWORD);
 
@@ -196,8 +200,9 @@ function mdToHtml(md) {
   }
 
   // 2. Fetch pending drafts (raw, no JOIN — keeps the query simple).
-  const drafts = await supaGet(`articles?status=eq.draft&wp_post_id=is.null&order=created_at.asc&limit=${LIMIT}&select=id,title,slug,meta_description,content_markdown,article_type,word_count,niche_id,keyword_id,language,primary_keyword,quality_score`);
-  console.log(`${ts()} fetched ${drafts.length} draft(s)`);
+  const onlyFilter = ONLY_ID ? `&id=eq.${encodeURIComponent(ONLY_ID)}` : "";
+  const drafts = await supaGet(`articles?status=eq.draft&wp_post_id=is.null${onlyFilter}&order=created_at.asc&limit=${ONLY_ID ? 1 : LIMIT}&select=id,title,slug,meta_description,content_markdown,article_type,word_count,niche_id,keyword_id,language,primary_keyword,quality_score`);
+  console.log(`${ts()} fetched ${drafts.length} draft(s)${ONLY_ID ? ` (only=${ONLY_ID})` : ""}`);
 
   if (drafts.length === 0) {
     console.log(`${ts()} nothing to do — no pending drafts`);
@@ -225,6 +230,24 @@ function mdToHtml(md) {
     const t0 = Date.now();
     console.log(`${ts()} 📤 "${a.title?.slice(0, 60)}"`);
     try {
+      // Spanish residual repair (deterministic) — mirror the main pipeline so a
+      // leaked English heading/label (## FAQ, Quick Verdict, Pricing) doesn't
+      // fail an otherwise-good Spanish article on QA. Persist so it's durable.
+      if (normalizeLanguage(a.language) === "es") {
+        const esRepair = repairSpanishResidual(a.content_markdown, a.language);
+        if (esRepair.changed) {
+          a.content_markdown = esRepair.text;
+          if (!DRY_RUN) {
+            await supaPatch(`articles?id=eq.${a.id}`, {
+              content_markdown: a.content_markdown,
+              word_count: a.content_markdown.split(/\s+/).filter(Boolean).length,
+            }).catch(() => {});
+          }
+          console.log(
+            `${ts()} 🧹 ES residual repair: ${esRepair.replaced.map((r) => `${r.phrase}→${r.to}`).join(", ")}`
+          );
+        }
+      }
       // Strip leftover [AFFILIATE:...] tags
       const md = (a.content_markdown || "")
         .replace(/\[AFFILIATE:[^\]]+\]([^\[]*)\[\/AFFILIATE\]/gi, "$1")
