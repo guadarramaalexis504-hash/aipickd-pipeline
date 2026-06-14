@@ -21,6 +21,10 @@ on:
         description: "Max articles to process (blank = all)"
         required: false
         default: ""
+      lang:
+        description: "Only this language (e.g. es). Blank = all."
+        required: false
+        default: ""
       dry_run:
         description: "Dry run (report only, write nothing)"
         required: false
@@ -78,12 +82,16 @@ jobs:
         env:
           MODE: ${{ github.event.inputs.mode || 'upgrade' }}
           LIMIT: ${{ github.event.inputs.limit }}
+          LANG: ${{ github.event.inputs.lang }}
           DRY_RUN: ${{ github.event.inputs.dry_run || 'true' }}
         run: |
           ARGS=()
           if [ "$MODE" = "upgrade" ]; then ARGS+=(--upgrade); fi
-          if [ "$DRY_RUN" = "true" ]; then ARGS+=(--dry-run); fi
+          # add-schema-markup.js writes only with an explicit write flag; pass
+          # --go on a live run (previously omitted, so "live" silently no-op'd).
+          if [ "$DRY_RUN" = "true" ]; then ARGS+=(--dry-run); else ARGS+=(--go); fi
           if [ -n "$LIMIT" ]; then ARGS+=(--limit "$LIMIT"); fi
+          if [ -n "$LANG" ]; then ARGS+=(--lang "$LANG"); fi
           echo "Running: node scripts/add-schema-markup.js ${ARGS[*]}"
           node scripts/add-schema-markup.js "${ARGS[@]}"
 

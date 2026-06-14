@@ -56,6 +56,12 @@ const UPGRADE = argv.includes("--upgrade");
 const DRY_RUN = !(argv.includes("--go") || argv.includes("--fix") || argv.includes("--apply") || argv.includes("--confirm"));
 const limitIdx = argv.indexOf("--limit");
 const LIMIT = limitIdx >= 0 ? Math.max(1, parseInt(argv[limitIdx + 1], 10) || 0) : 0;
+// --lang es: only process articles in a given language (e.g. backfill the new
+// Spanish FAQPage schema without re-touching the English corpus).
+const langIdx = argv.indexOf("--lang");
+const LANG = langIdx >= 0 ? String(argv[langIdx + 1] || "").toLowerCase() : null;
+const onlyIdx = argv.indexOf("--only");
+const ONLY_ID = onlyIdx >= 0 ? argv[onlyIdx + 1] : null;
 
 // ── Constants ─────────────────────────────────────────────────────
 const WP_HOST = "https://aipickd.com";
@@ -141,7 +147,10 @@ async function wp(method, endpoint, body) {
   // through every article (least-recently-stamped first) instead of re-doing
   // the newest N each run. Stamped after each write/skip below.
   let endpoint =
-    "articles?select=id,title,slug,wp_post_id,article_type,meta_description,featured_image_url,content_markdown,quality_score,word_count,schema_updated_at&wp_post_id=not.is.null&status=eq.published&order=schema_updated_at.asc.nullsfirst,published_at.desc";
+    "articles?select=id,title,slug,wp_post_id,article_type,meta_description,featured_image_url,content_markdown,quality_score,word_count,language,schema_updated_at&wp_post_id=not.is.null&status=eq.published" +
+    (LANG ? `&language=eq.${encodeURIComponent(LANG)}` : "") +
+    (ONLY_ID ? `&id=eq.${encodeURIComponent(ONLY_ID)}` : "") +
+    "&order=schema_updated_at.asc.nullsfirst,published_at.desc";
   if (LIMIT) endpoint += `&limit=${LIMIT}`;
   const articles = await supa("GET", endpoint);
   console.log(`Found ${articles.length} published article(s) with WP posts.\n`);
