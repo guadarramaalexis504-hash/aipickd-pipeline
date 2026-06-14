@@ -36,6 +36,50 @@ const env = loadEnv();
 
 const ALERT_ONLY = process.argv.includes("--alert");
 
+// Cross-run anti-flap: only alert after this many CONSECUTIVE failed runs, so a
+// single Hostinger cold-start blip in one run never alarms. State lives in the
+// monitor_state Supabase singleton; the monitor degrades gracefully (falls back
+// to single-run alerting) when the table is absent.
+const MIN_CONSECUTIVE_FAILS = 2;
+const MONITOR_STATE_ID = "00000000-0000-0000-0000-000000000001";
+
+async function readMonitorState() {
+  if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) return null;
+  try {
+    const res = await fetch(
+      `${env.SUPABASE_URL}/rest/v1/monitor_state?id=eq.${MONITOR_STATE_ID}&select=*`,
+      { headers: { apikey: env.SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}` } }
+    );
+    if (!res.ok) return null; // table missing / error → degrade to single-run alerting
+    const rows = await res.json();
+    if (!Array.isArray(rows)) return null;
+    return rows.length ? rows[0] : { consecutive_failures: 0, last_status: null, last_alerted_at: null };
+  } catch {
+    return null;
+  }
+}
+
+async function writeMonitorState({ consecutiveFailures, lastStatus, alerted }) {
+  if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) return;
+  const now = new Date().toISOString();
+  const patch = { consecutive_failures: consecutiveFailures, last_status: lastStatus, last_checked_at: now, updated_at: now };
+  if (alerted) patch.last_alerted_at = now;
+  try {
+    await fetch(`${env.SUPABASE_URL}/rest/v1/monitor_state?id=eq.${MONITOR_STATE_ID}`, {
+      method: "PATCH",
+      headers: {
+        apikey: env.SUPABASE_SERVICE_ROLE_KEY,
+        Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+        "Content-Type": "application/json",
+        Prefer: "return=minimal",
+      },
+      body: JSON.stringify(patch),
+    });
+  } catch {
+    /* degraded — state write is best-effort */
+  }
+}
+
 // Tuned for Hostinger shared hosting cold-starts.
 const CHECK_TIMEOUT_MS = 45_000; // per attempt — cold-start measured ~12s, leave generous headroom
 const SLOW_MS = 15_000; // above this is "slow" (informational), still UP
@@ -139,33 +183,60 @@ async function checkOnce(check) {
     warnings.forEach((w) => console.log(`    - ${w}`));
   }
 
+  // "Site down" = a connectivity/availability failure (not e.g. a low post count).
+  const isSiteDown = issues.some((i) => /HTTP 5|ERR_|timeout|failed \d+×/i.test(i));
+  const state = await readMonitorState(); // null → degrade to single-run alerting
+  const avgMs = Math.round(
+    results.reduce((s, r) => s + (r.loadMs || 0), 0) / Math.max(1, results.length)
+  );
+
   if (issues.length > 0) {
     console.log(`\n🚨 ${issues.length} ISSUE(S) DETECTED:`);
     issues.forEach((i) => console.log(`    - ${i}`));
+  }
 
-    // Route to #alertas. "Site down" = a connectivity/availability failure.
-    const isSiteDown = issues.some((i) => /HTTP 5|ERR_|timeout|failed \d+×/i.test(i));
-    if (isSiteDown) {
+  if (isSiteDown) {
+    const newFails = (state ? state.consecutive_failures || 0 : 0) + 1;
+    // With state: require MIN_CONSECUTIVE_FAILS runs. Without state (table absent
+    // or Supabase unreachable): alert now so a real outage is never missed.
+    const shouldAlert = state ? newFails >= MIN_CONSECUTIVE_FAILS : true;
+    await writeMonitorState({ consecutiveFailures: newFails, lastStatus: "down", alerted: shouldAlert });
+
+    if (shouldAlert) {
       const firstResult = results.find((r) => !r.ok);
-      const statusCode = firstResult?.status || null;
-      const responseMs = firstResult?.loadMs || null;
-      await notifyUptimeDown(statusCode, responseMs).catch(() => {});
+      await notifyUptimeDown(firstResult?.status || null, firstResult?.loadMs || null).catch(() => {});
+      const alertMsg = `**${issues.length} problema(s) detectado(s) en aipickd.com** (fallo run #${newFails})\n\n${issues
+        .map((i) => `• ${i}`)
+        .join("\n")}\n\n🔗 https://aipickd.com/`;
+      const r = await notifyAlert(alertMsg, "critical").catch(() => ({ ok: false }));
+      console.log(`\n📨 Alert sent to #alertas (consecutive fails: ${newFails}): ${r.ok ? "✅" : "❌"}`);
+      process.exit(1);
+    } else {
+      console.log(
+        `\n⏳ Fallo transitorio #${newFails} (<${MIN_CONSECUTIVE_FAILS}) — alerta suprimida, se confirma en el próximo run.`
+      );
+      process.exit(0); // don't redden CI / spam Discord on a single blip
     }
+  } else if (issues.length > 0) {
+    // Non-connectivity issue (e.g. low published count) — alert but leave the
+    // outage anti-flap counter untouched.
     const alertMsg = `**${issues.length} problema(s) detectado(s) en aipickd.com**\n\n${issues
       .map((i) => `• ${i}`)
       .join("\n")}\n\n🔗 https://aipickd.com/`;
-    const r = await notifyAlert(alertMsg, isSiteDown ? "critical" : "high").catch(() => ({ ok: false }));
+    const r = await notifyAlert(alertMsg, "high").catch(() => ({ ok: false }));
     console.log(`\n📨 Alert sent to #alertas: ${r.ok ? "✅" : "❌"}`);
-
     process.exit(1);
   } else {
     console.log(`\n✅ All checks passed. Site is healthy.`);
-    if (!ALERT_ONLY) {
-      // Optional "all good" ping to #alertas
-      const totalMs = results.reduce((s, r) => s + (r.loadMs || 0), 0);
-      const avgMs = Math.round(totalMs / Math.max(1, results.length));
+    // Recovery: if we were previously down (and had alerted), announce restored.
+    if (state && state.last_status === "down" && state.last_alerted_at) {
+      await notifyUptimeRestored(avgMs).catch(() => {});
+      console.log(`   🟢 Recovery announced (was down).`);
+    } else if (!ALERT_ONLY) {
+      // Optional "all good" ping only in interactive mode (avoids hourly spam).
       await notifyUptimeRestored(avgMs).catch(() => {});
     }
+    await writeMonitorState({ consecutiveFailures: 0, lastStatus: "up", alerted: false });
   }
 })().catch((e) => {
   console.error("❌ FATAL:", e.message);
