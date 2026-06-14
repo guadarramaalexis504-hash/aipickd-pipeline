@@ -2,7 +2,33 @@
 
 const { test } = require("node:test");
 const assert = require("node:assert");
-const { repairSpanishResidual } = require("../scripts/lib/quality");
+const { repairSpanishResidual, repairListCountTitle } = require("../scripts/lib/quality");
+
+function toolSection(name) {
+  return `## ${name}\nEs una herramienta real con descripción suficiente para contar como desarrollada. Precio aproximado y casos de uso.\n`;
+}
+
+test("repairListCountTitle lowers the title number to match developed tools", () => {
+  const md = [
+    "# 7 Mejores IAs para Crear Videos en 2026",
+    toolSection("Runway"),
+    toolSection("Pika"),
+    toolSection("Synthesia"),
+    toolSection("HeyGen"),
+    toolSection("Descript"),
+    "## Preguntas frecuentes\n**¿Pregunta?** Respuesta.",
+  ].join("\n\n");
+  const out = repairListCountTitle({ title: "7 Mejores IAs para Crear Videos en 2026", language: "es", content_markdown: md });
+  assert.ok(out.changed);
+  assert.equal(out.to, 5);
+  assert.match(out.title, /^5 Mejores IAs/);
+});
+
+test("repairListCountTitle is a no-op when count already matches", () => {
+  const md = ["# 2 Mejores IAs", toolSection("Runway"), toolSection("Pika"), "## Preguntas frecuentes\n**¿Q?** A."].join("\n\n");
+  const out = repairListCountTitle({ title: "2 Mejores IAs", language: "es", content_markdown: md });
+  assert.equal(out.changed, false);
+});
 
 test("translates an English FAQ heading to Spanish", () => {
   const md = "# Titulo\n\n## FAQ\n\n- pregunta\n";

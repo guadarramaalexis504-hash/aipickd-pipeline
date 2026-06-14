@@ -44,6 +44,7 @@ const {
   formatAiTellIssue,
   formatToolPlaceholderIssue,
   repairSpanishResidual,
+  repairListCountTitle,
 } = require("./lib/quality");
 
 /**
@@ -1657,6 +1658,15 @@ async function publishAllDrafts(maxCount = 10) {
             `   🧹 ES residual repair: ${esRepair.replaced.map((r) => `${r.phrase}→${r.to}`).join(", ")}`
           );
         }
+      }
+      // List-count repair: if a listicle developed fewer tools than its title
+      // promises, lower the title number to match (honest) instead of failing QA
+      // on "title promises N but only M developed" — the #1 listicle failure.
+      const countFix = repairListCountTitle(article);
+      if (countFix.changed) {
+        article.title = countFix.title;
+        await supa("PATCH", `articles?id=eq.${article.id}`, { title: article.title }).catch(() => {});
+        console.log(`   🔢 List-count title repair: ${countFix.from} → ${countFix.to} tools`);
       }
       qa = qualityGate(article);
     } catch (prepErr) {

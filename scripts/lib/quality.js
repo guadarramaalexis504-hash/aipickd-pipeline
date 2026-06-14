@@ -550,6 +550,24 @@ const SPANISH_RESIDUAL_LABEL_MAP = [
   { phrase: "Use cases", re: /\bUse cases\b/g, to: "Casos de uso" },
 ];
 
+// Deterministic list-count repair. The #1 listicle QA failure is "title promises
+// N tools but only M were developed" (the model under-delivers). Rather than fail
+// or regenerate a whole article, lower the title's promised count to the number
+// actually developed — honest and accurate ("7 Mejores IAs" → "5 Mejores IAs").
+// Only fires when at least 3 real tools were developed (fewer = genuinely thin,
+// let it fail). Returns { title, changed, from, to }.
+function repairListCountTitle(article = {}) {
+  const mismatch = detectListCountMismatch(article);
+  if (!mismatch) return { title: article.title, changed: false };
+  const { expected, found } = mismatch;
+  if (found < 3 || found >= expected) return { title: article.title, changed: false };
+  const title = String(article.title || "");
+  const re = new RegExp(`\\b${expected}\\b`);
+  if (!re.test(title)) return { title, changed: false };
+  const next = title.replace(re, String(found));
+  return { title: next, changed: next !== title, from: expected, to: found };
+}
+
 function repairSpanishResidual(markdown = "", language = "es") {
   if (normalizeLanguage(language) !== "es") {
     return { text: String(markdown || ""), changed: false, replaced: [] };
@@ -735,6 +753,7 @@ module.exports = {
   qualityGate,
   repairToolPlaceholders,
   repairSpanishResidual,
+  repairListCountTitle,
   issueMessages,
   hasFaqSection,
   detectLanguageMismatch,
