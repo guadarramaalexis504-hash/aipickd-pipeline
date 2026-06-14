@@ -89,6 +89,10 @@ const urlsToCheck = [
   { name: "Homepage", url: "https://aipickd.com/" },
   { name: "About", url: "https://aipickd.com/about/" },
   { name: "Sample article", url: "https://aipickd.com/jasper-vs-copy-vs-writesonic/" },
+  // Spanish article — guards the /es/ Polylang routing. A LiteSpeed object-cache
+  // desync of the rewrite_rules option once served a stale (no-/es/) ruleset and
+  // 404'd every /es/ URL; this catches a recurrence within the hour.
+  { name: "Spanish article (/es/)", url: "https://aipickd.com/es/chatgpt-vs-claude-vs-gemini-2026/" },
   { name: "Sitemap", url: "https://aipickd.com/wp-sitemap.xml" },
 ];
 
