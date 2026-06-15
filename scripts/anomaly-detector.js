@@ -130,10 +130,24 @@ async function supa(endpoint) {
 
   // Send to Discord using proper notify.js embeds
   const { notifyAlert } = require("./notify.js");
+  const { shouldAlert } = require("./lib/alert-cooldown");
+
+  // Cross-run cooldown: a STANDING anomaly (stuck keyword, cost spike, …) used to
+  // re-alert every hour. Only alert about each anomaly type once per 6h.
+  const COOLDOWN_MS = 6 * 60 * 60 * 1000;
+  async function dropCoolingDown(list) {
+    const fresh = [];
+    for (const a of list) {
+      if (await shouldAlert(`anomaly:${a.type}`, COOLDOWN_MS)) fresh.push(a);
+    }
+    return fresh;
+  }
 
   // Critical + high anomalies: group into one alert
-  const criticalAndHigh = anomalies.filter(
-    (a) => (a.severity === "critical" || a.severity === "high") && a.type !== "site-down" && a.type !== "site-unreachable"
+  const criticalAndHigh = await dropCoolingDown(
+    anomalies.filter(
+      (a) => (a.severity === "critical" || a.severity === "high") && a.type !== "site-down" && a.type !== "site-unreachable"
+    )
   );
   if (criticalAndHigh.length > 0) {
     const msg = criticalAndHigh
@@ -147,7 +161,7 @@ async function supa(endpoint) {
   }
 
   // Medium anomalies: single info alert
-  const medium = anomalies.filter(a => a.severity === "medium");
+  const medium = await dropCoolingDown(anomalies.filter(a => a.severity === "medium"));
   if (medium.length > 0) {
     const msg = medium.map(a => `🟡 **${a.type}**: ${a.message}`).join("\n\n");
     try {

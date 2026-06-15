@@ -116,11 +116,20 @@ const JSON_OUT = process.argv.includes("--json");
 
   try {
     const { notifyBudgetAlert } = require("./notify.js");
+    const { shouldAlert } = require("./lib/alert-cooldown");
+    // Cross-run cooldown keyed by the threshold bucket crossed, so a standing
+    // "month at 72%" alerts once/day (per bucket) instead of every 4-hourly run.
     if (monthPct >= 70) {
-      await notifyBudgetAlert(monthPct, monthCost, MONTHLY_BUDGET, "monthly");
+      const bucket = monthPct >= 100 ? 100 : monthPct >= 90 ? 90 : 70;
+      if (await shouldAlert(`budget-monthly-${bucket}`, 24 * 60 * 60 * 1000)) {
+        await notifyBudgetAlert(monthPct, monthCost, MONTHLY_BUDGET, "monthly");
+      }
     }
     if (todayPct >= 80) {
-      await notifyBudgetAlert(todayPct, todayCost, DAILY_BUDGET, "daily");
+      const bucket = todayPct >= 100 ? 100 : 80;
+      if (await shouldAlert(`budget-daily-${bucket}`, 6 * 60 * 60 * 1000)) {
+        await notifyBudgetAlert(todayPct, todayCost, DAILY_BUDGET, "daily");
+      }
     }
   } catch (e) {
     if (process.env.NOTIFY_DEBUG) console.log("[cost-monitor] alert error:", e.message);
