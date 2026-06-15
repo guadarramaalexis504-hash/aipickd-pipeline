@@ -61,7 +61,12 @@ async function getAllWPPosts() {
 // DIFFERENT groups and the real duplicates (8 of them, all "...-2026-2") were
 // never detected. WP appends "-2/-3..." on slug collision, so the collision
 // suffix is always 1-3 digits and always comes AFTER the year.
-const baseSlug = (slug) => slug.replace(/-\d{1,3}$/, "");
+// Strip ONLY WP's collision suffix, which always follows the year ("...-2026-2"
+// → "...-2026"). The old /-\d{1,3}$/ also ate real model/version slugs
+// ("claude-3" → "claude", "gpt-4" → "gpt"), grouping distinct articles as
+// duplicates and DELETING one in --fix mode. Anchor to a 20xx year so only the
+// genuine collision suffix is removed.
+const baseSlug = (slug) => slug.replace(/(-20\d{2})-\d{1,3}$/, "$1");
 
 // --- main ---
 (async () => {

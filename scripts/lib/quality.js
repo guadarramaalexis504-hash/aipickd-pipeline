@@ -562,8 +562,12 @@ function repairListCountTitle(article = {}) {
   const { expected, found } = mismatch;
   if (found < 3 || found >= expected) return { title: article.title, changed: false };
   const title = String(article.title || "");
-  const re = new RegExp(`\\b${expected}\\b`);
-  if (!re.test(title)) return { title, changed: false };
+  const re = new RegExp(`\\b${expected}\\b`, "g");
+  const matches = title.match(re);
+  // Only rewrite when the promised number appears EXACTLY once — otherwise a
+  // single replacement would contradict the other occurrence ("4 Mejores… solo
+  // 7 valen"). Absent or ambiguous → leave the title alone.
+  if (!matches || matches.length !== 1) return { title, changed: false };
   const next = title.replace(re, String(found));
   return { title: next, changed: next !== title, from: expected, to: found };
 }

@@ -24,6 +24,20 @@ test("repairListCountTitle lowers the title number to match developed tools", ()
   assert.match(out.title, /^5 Mejores IAs/);
 });
 
+test("repairListCountTitle bails when the promised number appears twice (avoids contradiction)", () => {
+  const md = [
+    "# 7 Mejores IAs para Escribir en 2026: solo 7 valen",
+    toolSection("ChatGPT"),
+    toolSection("Claude"),
+    toolSection("Jasper"),
+    toolSection("Copy.ai"),
+    "## Preguntas frecuentes\n**¿Q?** A.",
+  ].join("\n\n");
+  // developed 4, title promises 7 (twice) — must NOT produce "4 Mejores… solo 7 valen"
+  const out = repairListCountTitle({ title: "7 Mejores IAs para Escribir en 2026: solo 7 valen", language: "es", content_markdown: md });
+  assert.equal(out.changed, false);
+});
+
 test("repairListCountTitle is a no-op when count already matches", () => {
   const md = ["# 2 Mejores IAs", toolSection("Runway"), toolSection("Pika"), "## Preguntas frecuentes\n**¿Q?** A."].join("\n\n");
   const out = repairListCountTitle({ title: "2 Mejores IAs", language: "es", content_markdown: md });

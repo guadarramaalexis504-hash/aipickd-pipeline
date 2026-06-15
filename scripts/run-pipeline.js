@@ -47,6 +47,7 @@ const {
   detectToolPlaceholders,
   repairSpanishResidual,
   repairListCountTitle,
+  hasFaqSection,
 } = require("./lib/quality");
 
 /**
@@ -199,7 +200,14 @@ async function gpt(model, system, user, maxTokens, jsonMode = false) {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(`GPT ${model}: ${res.status} ${JSON.stringify(data).slice(0, 300)}`);
-      return { text: data.choices[0].message.content, usage: data.usage };
+      // Guard: a 200 can still carry empty choices / null content (refusal,
+      // content filter). Throw so the retry loop handles it instead of crashing
+      // downstream on data.choices[0] or content.split(...).
+      const content = data.choices?.[0]?.message?.content;
+      if (typeof content !== "string" || content.trim() === "") {
+        throw new Error(`GPT ${model}: empty/blocked response ${JSON.stringify(data).slice(0, 200)}`);
+      }
+      return { text: content, usage: data.usage };
     } finally {
       clearTimeout(to);
     }
@@ -786,7 +794,11 @@ STRICT RULES:
     // ── Pass 3: FAQ injection if missing ──────────────────────────────────
     // GPT-4o frequently omits the FAQ section despite prompt instructions.
     // QA gate requires it for FAQPage schema, so we inject it programmatically.
-    if (!/^##\s+(?:FAQ|Frequently Asked Questions|Common Questions)/im.test(finalText) && Array.isArray(outline.faqs) && outline.faqs.length > 0) {
+    // Language-aware: an ES article already has "## Preguntas frecuentes"; the
+    // old English-only check thought it was missing and injected a SECOND FAQ
+    // (heading "## FAQ", later rewritten to a duplicate "## Preguntas frecuentes").
+    const faqHeading = ES ? "## Preguntas frecuentes" : "## FAQ";
+    if (!hasFaqSection(finalText, LANG) && Array.isArray(outline.faqs) && outline.faqs.length > 0) {
       console.log(`   📝 FAQ missing — injecting ${outline.faqs.length} Q&A`);
       try {
         const faqRes = await gpt(
@@ -797,7 +809,7 @@ STRICT RULES:
 ${outline.faqs.map((q, i) => `${i + 1}. ${q}`).join("\n")}
 
 Format EXACTLY like this:
-## FAQ
+${faqHeading}
 
 ### ${outline.faqs[0]}
 [2-3 sentence answer]
@@ -807,7 +819,7 @@ Format EXACTLY like this:
 
 (continue for all ${outline.faqs.length} questions)
 
-Rules: Start with "## FAQ" heading. Each question as "###" sub-heading. Each answer 2-3 sentences. No preamble or commentary.`,
+Rules: Start with the "${faqHeading}" heading. Each question as "###" sub-heading. Each answer 2-3 sentences. No preamble or commentary.`,
           1500
         );
         totalCost += estimateCost("gpt-4o-mini", faqRes.usage);
@@ -860,7 +872,9 @@ Rules: Start with "## FAQ" heading. Each question as "###" sub-heading. Each ans
     }
 
     // Affiliate links
-    const affiliates = await supa("GET", "affiliates?status=eq.active");
+    // supa() returns null on an empty body — guard so affiliates.find() below
+    // doesn't throw and discard an otherwise-good generated draft.
+    const affiliates = (await supa("GET", "affiliates?status=eq.active")) || [];
     const tagRegex = /\[AFFILIATE:([^\]]+)\]([^\[]+)\[\/AFFILIATE\]/gi;
     const affiliatesUsed = new Set();
     const firstSeen = new Map();
@@ -1129,9 +1143,10 @@ function qualityGate(article) {
     }
   }
 
-  // FAQ section check — needed for FAQPage schema
-  const hasFaq = /^##\s+(?:FAQ|Frequently Asked Questions|Common Questions)/im.test(md);
-  if (!hasFaq) issues.push("missing FAQ section (needed for schema)");
+  // FAQ section check — needed for FAQPage schema. Language-aware: Spanish
+  // articles use "## Preguntas frecuentes" (the English-only regex used to reject
+  // valid ES articles here while publish-pending-drafts.js accepted them).
+  if (!hasFaqSection(md, article.language)) issues.push("missing FAQ section (needed for schema)");
 
   return { pass: issues.length === 0, issues };
 }
