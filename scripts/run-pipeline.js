@@ -24,7 +24,7 @@ const path = require("path");
 const { spawnSync } = require("node:child_process");
 const { notify, notifyArticle, notifyPipeline, notifyAlert, calcQualityScore } = require("./notify.js");
 const { loadEnv } = require("./lib/env");
-const { fetchWithRetry } = require("./lib/http");
+const { fetchWithRetry, isTransientNetworkError } = require("./lib/http");
 const { publishKey: idempotencyPublishKey } = require("./lib/idempotency");
 const { validateRenderedHtml } = require("./lib/html-validator");
 const { ping: hcPing } = require("./lib/heartbeat");
@@ -1530,7 +1530,11 @@ async function publishAllDrafts(maxCount = 10) {
   } catch (e) {
     const msg = `supa("GET" drafts) threw: ${e.message?.slice(0, 200)}`;
     trace(`❌ ${msg}`);
-    notifyAlert(`🚨 **publishAllDrafts: drafts query failed**\n\`\`\`\n${msg}\n\`\`\``, "critical").catch(() => {});
+    // A transient Supabase network blip isn't a broken pipeline — don't fire a
+    // CRITICAL for it; the next run retries. Real errors still alert.
+    if (!isTransientNetworkError(e)) {
+      notifyAlert(`🚨 **publishAllDrafts: drafts query failed**\n\`\`\`\n${msg}\n\`\`\``, "critical").catch(() => {});
+    }
     throw e;
   }
 

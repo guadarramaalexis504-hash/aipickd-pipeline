@@ -183,6 +183,7 @@ jobs:
 
       - name: Notify Discord — pipeline completed
         if: success()
+        continue-on-error: true
         env:
           GEN_COUNT: ${{ github.event.inputs.gen_count || '1' }}
           POST_KEYWORDS: ${{ steps.post-keywords.outcome }}
@@ -214,15 +215,17 @@ jobs:
           const msg = failed.length === 0
             ? '✅ Pipeline completado exitosamente'
             : '⚠️ Pipeline completado con ' + failed.length + ' post-step(s) fallidos: ' + failed.join(', ');
-          notifyPipeline(msg, {
-            articlesGenerated: process.env.GEN_COUNT,
-            keywordsRemaining: 0,
-            postStepsFailed: failed,
-          }).then(r => console.log('Discord:', r.ok ? 'OK' : r.reason || r.status));
+          // Only report post-step outcomes here. run-pipeline.js already posts the
+          // real generated/published/queue counts — the old hardcoded
+          // keywordsRemaining:0 + GEN_COUNT (requested, not actual) made this embed
+          // always show '0 keywords' and the wrong generated number.
+          notifyPipeline(msg, { postStepsFailed: failed })
+            .then(r => console.log('Discord:', r.ok ? 'OK' : r.reason || r.status));
           "
 
       - name: Notify Discord — pipeline failed
         if: failure()
+        continue-on-error: true
         run: |
           node -e "
           const { notifyAlert } = require('./scripts/notify.js');

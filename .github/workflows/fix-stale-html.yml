@@ -27,7 +27,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: aipickd-html-fix
+  # Shares the mutation lock: rewrites WP post HTML, same as generate.yml's
+  # post-steps — they must not run concurrently on the same posts.
+  group: aipickd-mutations
   cancel-in-progress: false
 
 jobs:

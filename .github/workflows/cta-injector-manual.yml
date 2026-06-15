@@ -25,7 +25,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: aipickd-cta-injector
+  # Shares the mutation lock: this rewrites WP post content, same as generate.yml's
+  # post-steps — they must not run concurrently on the same posts.
+  group: aipickd-mutations
   cancel-in-progress: false
 
 jobs:
