@@ -110,26 +110,11 @@ async function supa(endpoint) {
     }
   }
 
-  // 5. Site availability check
-  let siteResponseMs = null;
-  let siteIsDown = false;
-  try {
-    const siteStart = Date.now();
-    const r = await fetch("https://aipickd.com/", {
-      signal: AbortSignal.timeout(15000),
-      headers: { "User-Agent": "Mozilla/5.0 AIPickd-anomaly-check/1.0" },
-    });
-    siteResponseMs = Date.now() - siteStart;
-    if (!r.ok) {
-      flag("high", "site-down", `aipickd.com returned ${r.status}`, { status: r.status, ms: siteResponseMs });
-      siteIsDown = true;
-    } else {
-      console.log(`  ✅ Site OK — ${r.status} in ${siteResponseMs}ms`);
-    }
-  } catch (e) {
-    flag("critical", "site-unreachable", `aipickd.com unreachable: ${e.message}`, { error: e.message });
-    siteIsDown = true;
-  }
+  // 5. Site availability — intentionally NOT checked here. monitor-site.js owns
+  // uptime (hourly, with warm-up + a 3-strike anti-flap). This check used to live
+  // here too with NO warm-up, so a single Hostinger cold-start fired an immediate
+  // "site-unreachable" CRITICAL — a duplicate of monitor-site's alert AND the
+  // exact false-alarm class monitor-site was hardened against. Single source now.
 
   // === Output ===
   if (anomalies.length === 0) {
@@ -144,20 +129,9 @@ async function supa(endpoint) {
   });
 
   // Send to Discord using proper notify.js embeds
-  const { notifyAlert, notifyUptimeDown } = require("./notify.js");
+  const { notifyAlert } = require("./notify.js");
 
-  // Site down: dedicated uptime alert
-  if (siteIsDown) {
-    const siteAnomaly = anomalies.find(a => a.type === "site-down" || a.type === "site-unreachable");
-    if (siteAnomaly) {
-      try {
-        await notifyUptimeDown(siteAnomaly.data?.status || null, siteResponseMs);
-        console.log("📨 Site down alert sent to Discord");
-      } catch {}
-    }
-  }
-
-  // Other anomalies: group critical + high into one alert
+  // Critical + high anomalies: group into one alert
   const criticalAndHigh = anomalies.filter(
     (a) => (a.severity === "critical" || a.severity === "high") && a.type !== "site-down" && a.type !== "site-unreachable"
   );

@@ -79,8 +79,8 @@ async function checkSite() {
       supa(`articles?published_at=gte.${weekAgo}&select=id,word_count,status,generation_cost_usd`),
       // Total qa_failed count
       supa(`articles?status=eq.qa_failed&select=id`),
-      // qa_failed this week
-      supa(`articles?status=eq.qa_failed&created_at=gte.${weekAgo}&select=id,title,word_count`),
+      // qa_failed this week (created_at needed so the downstream "today" filter works)
+      supa(`articles?status=eq.qa_failed&created_at=gte.${weekAgo}&select=id,title,word_count,created_at`),
     ]);
 
   const todayArticles     = Array.isArray(todayArticlesRaw) ? todayArticlesRaw : [];

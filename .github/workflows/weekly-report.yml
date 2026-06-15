@@ -32,6 +32,7 @@ jobs:
           discord-webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
           discord-webhook-alertas: ${{ secrets.DISCORD_WEBHOOK_ALERTAS }}
           discord-webhook-pipeline: ${{ secrets.DISCORD_WEBHOOK_PIPELINE }}
+          discord-webhook-reportes: ${{ secrets.DISCORD_WEBHOOK_REPORTES }}
 
       - name: Generate weekly report + send to Discord
         env:

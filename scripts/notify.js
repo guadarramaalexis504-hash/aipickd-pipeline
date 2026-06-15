@@ -27,7 +27,26 @@ const env = loadEnv();
 // Core: POST to Discord webhook with embed
 // ─────────────────────────────────────────────
 async function postWebhook(url, payload) {
-  if (!url) return { ok: false, reason: 'webhook URL not configured' };
+  if (!url) {
+    // A missing/typo'd webhook secret used to vanish silently (every caller
+    // ignores the result). Surface it in CI / debug so it's diagnosable.
+    if (process.env.CI || process.env.NOTIFY_DEBUG) {
+      console.warn('[notify] webhook URL not configured — message dropped');
+    }
+    return { ok: false, reason: 'webhook URL not configured' };
+  }
+  // Defensive clamp: Discord 400s (and the whole message is dropped) if any embed
+  // field value >1024, name >256, or description >4096. Reports build unbounded
+  // lists, so clamp here so a long article/keyword list can't silently kill a report.
+  for (const embed of payload?.embeds || []) {
+    if (typeof embed.description === 'string' && embed.description.length > 4096) {
+      embed.description = embed.description.slice(0, 4093) + '…';
+    }
+    for (const f of embed.fields || []) {
+      if (typeof f.value === 'string' && f.value.length > 1024) f.value = f.value.slice(0, 1021) + '…';
+      if (typeof f.name === 'string' && f.name.length > 256) f.name = f.name.slice(0, 256);
+    }
+  }
   try {
     const res = await fetchWithRetry(
       url,

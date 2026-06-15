@@ -35,6 +35,7 @@ jobs:
           discord-webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
           discord-webhook-pipeline: ${{ secrets.DISCORD_WEBHOOK_PIPELINE }}
           discord-webhook-alertas: ${{ secrets.DISCORD_WEBHOOK_ALERTAS }}
+          discord-webhook-reportes: ${{ secrets.DISCORD_WEBHOOK_REPORTES }}
 
       - name: Send daily digest to Discord
         env:

@@ -1,5 +1,5 @@
 name: "Setup AIPickd Environment"
-description: "Checkout, install Node 20 deps, and export AIPickd secrets to the job env (no .env file written)."
+description: "Checkout, install Node 22 deps, and export AIPickd secrets to the job env (no .env file written)."
 
 inputs:
   supabase-url:
@@ -40,6 +40,10 @@ inputs:
     description: "Discord webhook for #alertas"
     required: false
     default: ""
+  discord-webhook-reportes:
+    description: "Discord webhook for #reportes-semanales"
+    required: false
+    default: ""
   install-deps:
     description: "Run npm ci (set false to skip)"
     required: false
@@ -48,10 +52,10 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Setup Node.js 20
+    - name: Setup Node.js 22
       uses: actions/setup-node@v4
       with:
-        node-version: "20"
+        node-version: "22"
         cache: "npm"
 
     - name: Install dependencies
@@ -72,6 +76,7 @@ runs:
         DISCORD_WEBHOOK_ARTICULOS: ${{ inputs.discord-webhook-articulos }}
         DISCORD_WEBHOOK_PIPELINE: ${{ inputs.discord-webhook-pipeline }}
         DISCORD_WEBHOOK_ALERTAS: ${{ inputs.discord-webhook-alertas }}
+        DISCORD_WEBHOOK_REPORTES: ${{ inputs.discord-webhook-reportes }}
       run: |
         # Use the GH-provided multiline-safe writer instead of `echo VAR=$VALUE`,
         # which mangles values containing newlines, quotes, or backticks.
@@ -97,3 +102,4 @@ runs:
         write_env DISCORD_WEBHOOK_ARTICULOS   "$DISCORD_WEBHOOK_ARTICULOS"
         write_env DISCORD_WEBHOOK_PIPELINE    "$DISCORD_WEBHOOK_PIPELINE"
         write_env DISCORD_WEBHOOK_ALERTAS     "$DISCORD_WEBHOOK_ALERTAS"
+        write_env DISCORD_WEBHOOK_REPORTES    "$DISCORD_WEBHOOK_REPORTES"
