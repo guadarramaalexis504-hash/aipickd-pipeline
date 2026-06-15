@@ -28,15 +28,11 @@
 const fs   = require('fs');
 const path = require('path');
 
-// ── Load .env ────────────────────────────────────────────────────────────────
-const envPath = path.join(__dirname, '..', '.env');
-const env = {};
-try {
-  fs.readFileSync(envPath, 'utf8').split('\n').forEach(line => {
-    const m = line.match(/^([A-Z0-9_]+)="?([^"\n]*)"?$/);
-    if (m) env[m[1]] = m[2];
-  });
-} catch {}
+// Secrets from process.env (CI) with .env fallback (local). The old .env-only
+// reader returned {} in GitHub Actions (setup-env writes no .env file), so every
+// Supabase/OpenAI call here silently failed.
+const { loadEnv } = require('./lib/env');
+const env = loadEnv();
 
 const { notifyAlert } = require('./notify.js');
 

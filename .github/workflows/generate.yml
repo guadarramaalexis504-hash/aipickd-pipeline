@@ -102,7 +102,7 @@ jobs:
       - name: Recovery — publish any pending drafts
         id: post-publish-recovery
         continue-on-error: true
-        run: node scripts/publish-pending-drafts.js --limit 5
+        run: node scripts/publish-pending-drafts.js --limit 5 --go
 
       # Self-healing image backfill: ~65 old articles have no featured image
       # (the pipeline used the now-removed dall-e-3 model). 3 per run × 6 runs/day
@@ -110,7 +110,7 @@ jobs:
       - name: Backfill missing featured images (gradual)
         id: post-backfill-images
         continue-on-error: true
-        run: node scripts/backfill-images.js --limit 3
+        run: node scripts/backfill-images.js --limit 3 --go
 
       # Self-healing categorization: ~66 posts sit in "Uncategorized". Idempotent
       # (skips already-correct posts), so this safely converges to zero in ~1 day
@@ -118,7 +118,7 @@ jobs:
       - name: Categorize uncategorized posts (gradual)
         id: post-categorize
         continue-on-error: true
-        run: node scripts/categorize-posts.js --limit 25
+        run: node scripts/categorize-posts.js --limit 25 --go
 
       # Self-healing schema (upgrade): cycles 15 articles/run ordered by
       # schema_updated_at NULLS FIRST, sweeping all 118 in ~1.3 days then keeping
@@ -129,7 +129,7 @@ jobs:
       - name: Refresh schema (gradual, cycles all articles)
         id: post-schema
         continue-on-error: true
-        run: node scripts/add-schema-markup.js --upgrade --limit 15
+        run: node scripts/add-schema-markup.js --upgrade --limit 15 --go
 
       - name: Auto-refill keyword queue (if < 50 keywords)
         id: post-keywords
@@ -139,7 +139,7 @@ jobs:
       - name: Dedup keyword queue (remove similar keywords)
         id: post-dedup-keywords
         continue-on-error: true
-        run: node scripts/dedup-keywords.js
+        run: node scripts/dedup-keywords.js --fix
 
       - name: Cleanup stuck drafts (draft >5 days with no WP post)
         id: post-cleanup-drafts
@@ -159,7 +159,7 @@ jobs:
       - name: Inject CTA buttons + reading time into new articles
         id: post-cta
         continue-on-error: true
-        run: node scripts/cta-injector.js --hours 6
+        run: node scripts/cta-injector.js --hours 6 --go
 
       - name: Trending keywords (Mondays only)
         id: post-trending

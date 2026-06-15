@@ -14,15 +14,11 @@
  *   node scripts/add-internal-links.js --max 2      # max links per article
  */
 
-const fs = require("fs");
-const path = require("path");
-
-const envPath = path.join(__dirname, "..", ".env");
-const env = {};
-fs.readFileSync(envPath, "utf8").split("\n").forEach((line) => {
-  const m = line.match(/^([A-Z_]+)="?([^"\n]*)"?$/);
-  if (m) env[m[1]] = m[2];
-});
+// Secrets from process.env (CI) with .env fallback (local). The old
+// fs.readFileSync(".env") threw without try/catch when .env was absent and used
+// a regex that truncates values containing quotes — loadEnv() handles both.
+const { loadEnv } = require("./lib/env");
+const env = loadEnv();
 
 const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, WP_USERNAME, WP_ADMIN_PASSWORD } = env;
 const auth = Buffer.from(`${WP_USERNAME}:${WP_ADMIN_PASSWORD}`).toString("base64");
