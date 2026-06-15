@@ -448,16 +448,18 @@ function shouldRespond(message) {
 // from "go to #alertas, read, scroll, find context" into "open thread, read
 // summary, act."
 const ALERT_CHANNEL_KEYWORDS = ['alertas', 'alerts'];
-const ALERT_SEVERITY_INDICATORS = ['🚨', '🟠', 'CRITICAL', 'HIGH']; // skip warning/info
 
 function isAlertMessage(message) {
   if (!message.webhookId) return false;
   const chName = message.channel.name?.toLowerCase() || '';
   if (!ALERT_CHANNEL_KEYWORDS.some((kw) => chName.includes(kw))) return false;
-  // Pull text from embed title + description (notify.js puts severity in title)
-  const embed = message.embeds?.[0];
-  const probe = `${embed?.title || ''} ${embed?.description || ''} ${message.content || ''}`;
-  return ALERT_SEVERITY_INDICATORS.some((s) => probe.includes(s));
+  // notify.js sets the embed TITLE to "… Alerta AIPickd — {SEVERITY}". Match the
+  // severity from the title suffix ONLY. The old check scanned title+description+
+  // content for '🚨'/'🟠'/'CRITICAL'/'HIGH' as substrings, so a WARNING-level
+  // budget/QA message (which carries a 🚨 in its body) false-triggered a debug
+  // thread + a Claude call — cost + noise on non-critical alerts.
+  const title = message.embeds?.[0]?.title || '';
+  return /—\s*(CRITICAL|HIGH)\b/i.test(title);
 }
 
 async function suggestFixViaClaude(alertText) {
