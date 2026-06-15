@@ -56,6 +56,15 @@ test("injectRelatedBlock appends once and refreshes on re-run (idempotent)", () 
   assert.ok(!second.html.includes("Best AI Writing Tools"));
 });
 
+test("injectRelatedBlock does NOT append when a different-format related block exists", () => {
+  // internal-links.js writes this div variant; we must not add a second block.
+  const existing = '<p>body</p>\n<div class="aipickd-related"><h3>Related</h3></div>';
+  const block = buildRelatedBlock([corpus[1]], "en");
+  const out = injectRelatedBlock(existing, block);
+  assert.equal(out.changed, false);
+  assert.equal(out.html, existing);
+});
+
 test("escapes HTML in titles", () => {
   const block = buildRelatedBlock(
     [{ title: "A & B <script>", slug: "x", wp_url: "https://aipickd.com/x/", language: "en" }],

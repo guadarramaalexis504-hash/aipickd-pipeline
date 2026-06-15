@@ -269,6 +269,10 @@ Return JSON: { "title": "...", "meta_description": "...", "title_chars": N, "met
         "status=eq.published" +
         "&title_refreshed_at=is.null" +
         "&wp_post_id=not.is.null" +
+        // Exclude Spanish: rewriteTitle uses English-only CTR rules + English
+        // power words and would overwrite ES titles/meta with English ones. The
+        // Spanish system (spanish-ctr.js) isn't wired here yet.
+        "&language=neq.es" +
         "&select=id,title,slug,primary_keyword,article_type,meta_description,wp_post_id,published_at,gsc_impressions" +
         "&order=gsc_impressions.desc.nullslast,published_at.asc" +
         `&limit=${LIMIT}`

@@ -94,6 +94,10 @@ function injectRelatedBlock(html = "", block = "") {
     const next = current.replace(re, block);
     return { html: next, changed: next !== current };
   }
+  // Another "Related articles" block already exists in a DIFFERENT format (e.g.
+  // internal-links.js writes <div class="aipickd-related">…). Don't append a
+  // second one — both crons (this + internal-links) touch the same posts.
+  if (/aipickd-related/i.test(current)) return { html: current, changed: false };
   return { html: `${current}\n\n${block}`, changed: true };
 }
 
