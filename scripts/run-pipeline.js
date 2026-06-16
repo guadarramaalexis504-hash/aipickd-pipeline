@@ -1079,7 +1079,13 @@ function qualityGate(article) {
   }
 
   // Placeholder / lorem-ipsum / TODO markers
-  if (/\b(?:TODO|FIXME|XXX|lorem ipsum)\b/i.test(md)) issues.push("placeholder text in body");
+  // Match the TODO/FIXME/XXX code markers case-SENSITIVELY (uppercase). The old
+  // /…/i flag matched the Spanish word "todo" ("all/everything"), which appears
+  // in virtually every Spanish article → a false "placeholder text in body" that
+  // silently qa_failed most ES content. "lorem ipsum" stays case-insensitive.
+  if (/\b(?:TODO|FIXME|XXX)\b/.test(md) || /lorem ipsum/i.test(md)) {
+    issues.push("placeholder text in body");
+  }
   const toolPlaceholderIssue = formatToolPlaceholderIssue(md);
   if (toolPlaceholderIssue) issues.push(toolPlaceholderIssue);
 
