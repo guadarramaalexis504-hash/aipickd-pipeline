@@ -45,6 +45,7 @@ const {
   formatAiTellIssue,
   formatToolPlaceholderIssue,
   detectToolPlaceholders,
+  repairToolPlaceholders,
   repairSpanishResidual,
   repairListCountTitle,
   hasFaqSection,
@@ -840,31 +841,51 @@ Rules: Start with the "${faqHeading}" heading. Each question as "###" sub-headin
     // Only fires when placeholders are actually present, so the cost is bounded.
     const placeholdersBefore = detectToolPlaceholders(finalText);
     if (placeholdersBefore.length > 0) {
-      console.log(`${ts()} 🩹 Placeholder rescue: ${placeholdersBefore.length} placeholder(s) — filling with real tool names`);
+      console.log(`${ts()} 🩹 Placeholder rescue: ${placeholdersBefore.length} placeholder(s)`);
       try {
-        const rescueRes = await gpt(
-          "gpt-4o-2024-11-20",
+        // DETERMINISTIC rescue: instead of asking GPT to rewrite the whole 16k-token
+        // article (it reliably leaves one slot — verified: a 06-15 listicle still had
+        // "Herramienta A"), fetch real tool NAMES with one cheap call, then swap each
+        // placeholder in code. Names-only is a tiny, reliable task.
+        const need = Math.max(placeholdersBefore.length + 1, 4);
+        const namesRes = await gpt(
+          "gpt-4o-mini",
           ES
-            ? "Eres un editor experto de reseñas de IA. Reemplaza CADA placeholder por una herramienta de IA REAL, con nombre, que exista y sea relevante al tema. Jamas inventes marcas falsas. Conserva TODO lo demas identico (estructura, encabezados, tablas, enlaces, longitud). Devuelve SOLO el markdown completo."
-            : "You are an expert AI-tools review editor. Replace EVERY placeholder with a REAL, specific, named AI tool that exists and is relevant to the topic. Never invent fake brands. Keep EVERYTHING else identical (structure, headings, tables, links, length). Output ONLY the complete markdown.",
-          `${ES ? "Tema" : "Topic"}: ${kw.keyword}\n\n${
-            ES
-              ? "Este articulo dejo placeholders sin llenar (por ejemplo [Herramienta], Tool A, [Nombre], Producto B). Reemplaza CADA uno por una herramienta real con nombre."
-              : "This article left unfilled placeholders (e.g. [Tool], Tool A, [Name], Product B). Replace EACH with a real, named tool."
-          }\n\n${finalText}`,
-          16000
+            ? "Responde SOLO con nombres reales de herramientas de IA que existan de verdad, uno por linea, sin numeracion ni texto extra."
+            : "Reply ONLY with real, currently-existing AI tool names, one per line, no numbering or extra text.",
+          `${ES ? "Lista" : "List"} ${need} ${ES ? "herramientas de IA reales y conocidas para esta tarea" : "real, well-known AI tools for this task"}: "${kw.keyword}".`,
+          200
         );
-        if (rescueRes.usage) totalCost += estimateCost("gpt-4o-2024-11-20", rescueRes.usage);
-        const rescued = (rescueRes.text || "").trim();
-        const after = detectToolPlaceholders(rescued).length;
-        const wordsOk =
-          rescued.split(/\s+/).filter(Boolean).length >=
-          finalText.split(/\s+/).filter(Boolean).length * 0.85;
-        if (rescued && after < placeholdersBefore.length && wordsOk) {
-          finalText = rescued;
-          console.log(`${ts()} 🩹 Placeholder rescue applied (${after} remaining)`);
+        if (namesRes.usage) totalCost += estimateCost("gpt-4o-mini", namesRes.usage);
+        const names = (namesRes.text || "")
+          .split("\n")
+          .map((s) => s.replace(/^[\d.)\-*\s]+/, "").replace(/[*_`]/g, "").trim())
+          .filter((s) => s && s.length >= 2 && s.length < 40);
+        if (names.length > 0) {
+          // Keyed deterministic replacement (Tool A/Herramienta A/[Tool]/…) with the
+          // REAL topic names — repairToolPlaceholders' built-in defaults are wrong
+          // for non-chatbot topics (it would inject ChatGPT into a video article).
+          const rep = repairToolPlaceholders(finalText, {
+            toolA: names[0],
+            toolB: names[1] || names[0],
+            toolC: names[2] || names[0],
+            toolSet: names.slice(0, 3).join("/"),
+            genericTool: names[0],
+            genericProduct: names[1] || names[0],
+          });
+          let fixed = rep.text;
+          // Any remaining bracketed placeholders ([Herramienta 1], [Nombre], …) →
+          // cycle the real names (repairToolPlaceholders leaves null-keyed ones).
+          let i = 0;
+          fixed = fixed.replace(
+            /\[(?:Herramienta|Producto|Nombre|Tool|App|IA)[^\]]*\]/gi,
+            () => names[i++ % names.length]
+          );
+          finalText = fixed;
+          const after = detectToolPlaceholders(finalText).length;
+          console.log(`${ts()} 🩹 Placeholder rescue: filled with ${names.slice(0, 3).join(", ")} (${after} remaining)`);
         } else {
-          console.log(`${ts()} 🩹 Placeholder rescue kept original (after=${after}, wordsOk=${wordsOk})`);
+          console.log(`${ts()} 🩹 Placeholder rescue: no usable names returned — leaving for QA`);
         }
       } catch (e) {
         console.log(`${ts()} ⚠️  Placeholder rescue failed: ${(e.message || String(e)).slice(0, 60)}`);
