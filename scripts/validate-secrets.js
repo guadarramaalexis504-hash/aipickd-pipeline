@@ -32,7 +32,10 @@ function isUrl(v, { protocol = "https:", host } = {}) {
 function isDiscordWebhook(v) {
   if (!v) return true;
   // Accept both discord.com (current) and discordapp.com (legacy — Discord redirects automatically)
-  return isUrl(v, { protocol: "https:" }) && /^https:\/\/(?:[a-z]+\.)?discord(?:app)?\.com\/api\/webhooks\//.test(v.trim());
+  return (
+    isUrl(v, { protocol: "https:" }) &&
+    /^https:\/\/(?:[a-z]+\.)?discord(?:app)?\.com\/api\/webhooks\//.test(v.trim())
+  );
 }
 
 function isWpAppPassword(v) {
@@ -60,7 +63,8 @@ const checks = [
     key: "OPENAI_API_KEY",
     required: true,
     validate: (v) => /^sk-(proj-)?[A-Za-z0-9_-]{20,}$/.test(v.trim()),
-    error: "must start with sk- (or sk-proj-) with no extra text — check for trailing spaces/newlines in the secret",
+    error:
+      "must start with sk- (or sk-proj-) with no extra text — check for trailing spaces/newlines in the secret",
   },
   {
     key: "WP_USERNAME",
@@ -152,12 +156,29 @@ for (const c of checks) {
       failed++;
     }
     try {
-      const r = await fetchWithRetry("https://aipickd.com/wp-json/", {}, { timeout: 10000, retries: 1 });
-      console.log(`  ${r.ok ? "✅" : "❌"} WordPress unauth: ${r.status}`);
-      if (!r.ok) failed++;
+      const r = await fetchWithRetry(
+        "https://aipickd.com/wp-json/",
+        {},
+        { timeout: 10000, retries: 1 }
+      );
+      if (r.ok) {
+        console.log(`  ✅ WordPress unauth: ${r.status}`);
+      } else {
+        // Reachable but non-2xx (e.g. transient 5xx on cold shared hosting).
+        // The auth probe below is the authoritative credential check — a flaky
+        // unauth reachability ping must NOT fail the whole workflow.
+        console.error(
+          `  ⚠️  WordPress unauth: ${r.status} (reachable but non-OK; not a secret problem)`
+        );
+      }
     } catch (e) {
-      console.error(`  ❌ WordPress probe: ${e.message}`);
-      failed++;
+      // Thrown fetch error = network/timeout (Hostinger unreachable from this
+      // runner — known intermittent on shared hosting), NOT a bad secret. Warn
+      // but do NOT fail, consistent with the auth probe below. A transient host
+      // blip must never fail secret validation.
+      console.error(
+        `  ⚠️  WordPress probe could not reach WP (network, not a secret problem): ${e.message}`
+      );
     }
 
     // Critical: probe the WP Application Password authentication. Regex
@@ -183,13 +204,17 @@ for (const c of checks) {
       } else {
         const body = await r.text();
         console.error(`  ❌ WordPress auth: ${r.status} — ${body.slice(0, 150)}`);
-        console.error(`     → Application Password may be rotated/revoked. Regenerate at /wp-admin/profile.php`);
+        console.error(
+          `     → Application Password may be rotated/revoked. Regenerate at /wp-admin/profile.php`
+        );
         failed++;
       }
     } catch (e) {
       // A thrown fetch error = network/timeout (Hostinger unreachable), NOT a bad
       // secret. Warn but do NOT fail secret validation on a transient blip.
-      console.error(`  ⚠️  WordPress auth probe could not reach WP (network, not a secret problem): ${e.message}`);
+      console.error(
+        `  ⚠️  WordPress auth probe could not reach WP (network, not a secret problem): ${e.message}`
+      );
     }
   }
 

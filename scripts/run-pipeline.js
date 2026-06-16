@@ -22,7 +22,13 @@
 const fs = require("fs");
 const path = require("path");
 const { spawnSync } = require("node:child_process");
-const { notify, notifyArticle, notifyPipeline, notifyAlert, calcQualityScore } = require("./notify.js");
+const {
+  notify,
+  notifyArticle,
+  notifyPipeline,
+  notifyAlert,
+  calcQualityScore,
+} = require("./notify.js");
 const { loadEnv } = require("./lib/env");
 const { fetchWithRetry, isTransientNetworkError } = require("./lib/http");
 const { publishKey: idempotencyPublishKey } = require("./lib/idempotency");
@@ -147,11 +153,13 @@ async function supa(method, endpoint, body) {
   // Strip ALL optional columns we know about and retry once.
   const isMissingColumn = !res.ok && (text.includes("42703") || text.includes("PGRST204"));
   if (isMissingColumn && body && typeof body === "object" && !Array.isArray(body)) {
-    const matchPg   = text.match(/column ['"]?[\w.]+\.([\w]+)['"]? does not exist/i);
+    const matchPg = text.match(/column ['"]?[\w.]+\.([\w]+)['"]? does not exist/i);
     const matchRest = text.match(/Could not find the ['"]([\w]+)['"] column/i);
     const missingCol = (matchPg && matchPg[1]) || (matchRest && matchRest[1]);
     if (missingCol && OPTIONAL_COLUMNS.has(missingCol) && missingCol in body) {
-      console.log(`   ℹ️  supa: column "${missingCol}" missing — retrying without optional columns`);
+      console.log(
+        `   ℹ️  supa: column "${missingCol}" missing — retrying without optional columns`
+      );
       const trimmed = { ...body };
       for (const k of OPTIONAL_COLUMNS) delete trimmed[k];
       ({ res, text } = await doRequest(trimmed));
@@ -169,7 +177,7 @@ async function supa(method, endpoint, body) {
 // preserve length on long articles. Caller's request still wins if smaller.
 const GPT_MAX_TOKENS_CAP = 12000;
 const GPT_ATTEMPT_TIMEOUT_MS = 90_000; // per-attempt — was 180s
-const GPT_MAX_RETRIES = 2;             // was 3 — third retry rarely succeeds within timeout budget
+const GPT_MAX_RETRIES = 2; // was 3 — third retry rarely succeeds within timeout budget
 
 // Set per-generation by generateOne to force the article language. Prepended to
 // EVERY gpt() system prompt so the whole pipeline (outline, draft, polish, FAQ,
@@ -200,13 +208,16 @@ async function gpt(model, system, user, maxTokens, jsonMode = false) {
         signal: ctrl.signal,
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(`GPT ${model}: ${res.status} ${JSON.stringify(data).slice(0, 300)}`);
+      if (!res.ok)
+        throw new Error(`GPT ${model}: ${res.status} ${JSON.stringify(data).slice(0, 300)}`);
       // Guard: a 200 can still carry empty choices / null content (refusal,
       // content filter). Throw so the retry loop handles it instead of crashing
       // downstream on data.choices[0] or content.split(...).
       const content = data.choices?.[0]?.message?.content;
       if (typeof content !== "string" || content.trim() === "") {
-        throw new Error(`GPT ${model}: empty/blocked response ${JSON.stringify(data).slice(0, 200)}`);
+        throw new Error(
+          `GPT ${model}: empty/blocked response ${JSON.stringify(data).slice(0, 200)}`
+        );
       }
       return { text: content, usage: data.usage };
     } finally {
@@ -289,7 +300,8 @@ async function scrubAiTellsForQa(markdown, label = "article") {
 async function wp(method, endpoint, body) {
   const auth = Buffer.from(`${WP_USERNAME}:${WP_ADMIN_PASSWORD}`).toString("base64");
   // Real browser UA + standard headers to bypass Hostinger/LiteSpeed 429 rate limits on bot UAs
-  const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+  const UA =
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
   const attempt = async () => {
     const ctrl = new AbortController();
     const to = setTimeout(() => ctrl.abort(), 60_000);
@@ -341,7 +353,11 @@ function generateToC(md) {
   while ((m = headingRegex.exec(md)) !== null) {
     const level = m[1].length;
     const text = m[2].trim().replace(/\*\*/g, "").replace(/`/g, "");
-    const anchor = text.toLowerCase().replace(/[^a-z0-9\s-]/g, "").replace(/\s+/g, "-").replace(/-+/g, "-");
+    const anchor = text
+      .toLowerCase()
+      .replace(/[^a-z0-9\s-]/g, "")
+      .replace(/\s+/g, "-")
+      .replace(/-+/g, "-");
     // Skip FAQ, Key Takeaways, Quick Verdict from ToC
     if (/^(faq|frequently asked|key takeaways|quick verdict|quick picks)/i.test(text)) {
       headings.push({ level, text, anchor, skip: true });
@@ -349,12 +365,14 @@ function generateToC(md) {
       headings.push({ level, text, anchor, skip: false });
     }
   }
-  const tocHeadings = headings.filter(h => !h.skip);
+  const tocHeadings = headings.filter((h) => !h.skip);
   if (tocHeadings.length < 5) return ""; // Only add ToC if 5+ headings
-  const items = tocHeadings.map(h => {
-    const indent = h.level === 3 ? "  " : "";
-    return `${indent}- [${h.text}](#${h.anchor})`;
-  }).join("\n");
+  const items = tocHeadings
+    .map((h) => {
+      const indent = h.level === 3 ? "  " : "";
+      return `${indent}- [${h.text}](#${h.anchor})`;
+    })
+    .join("\n");
   return `\n\n**📋 Table of Contents**\n\n${items}\n\n---\n\n`;
 }
 
@@ -422,21 +440,24 @@ function mdToHtml(md) {
   html = html.replace(/^> (.+)$/gm, "<blockquote>$1</blockquote>");
   html = html.replace(/^- (.+)$/gm, "<li>$1</li>");
   html = html.replace(/(<li>.*<\/li>\n?)+/g, (m) => `<ul>\n${m}</ul>\n`);
-  html = html.replace(
-    /(\|.+\|\n\|[\s\-\|:]+\|\n(?:\|.+\|\n?)+)/g,
-    (m) => {
-      const lines = m.trim().split("\n");
-      const header = lines[0].split("|").slice(1, -1).map((c) => c.trim());
-      const rows = lines.slice(2).map((l) =>
-        l.split("|").slice(1, -1).map((c) => c.trim())
-      );
-      const thead = `<thead><tr>${header.map((h) => `<th>${h}</th>`).join("")}</tr></thead>`;
-      const tbody = `<tbody>${rows
-        .map((r) => `<tr>${r.map((c) => `<td>${c}</td>`).join("")}</tr>`)
-        .join("")}</tbody>`;
-      return `<table class="wp-block-table">${thead}${tbody}</table>`;
-    }
-  );
+  html = html.replace(/(\|.+\|\n\|[\s\-\|:]+\|\n(?:\|.+\|\n?)+)/g, (m) => {
+    const lines = m.trim().split("\n");
+    const header = lines[0]
+      .split("|")
+      .slice(1, -1)
+      .map((c) => c.trim());
+    const rows = lines.slice(2).map((l) =>
+      l
+        .split("|")
+        .slice(1, -1)
+        .map((c) => c.trim())
+    );
+    const thead = `<thead><tr>${header.map((h) => `<th>${h}</th>`).join("")}</tr></thead>`;
+    const tbody = `<tbody>${rows
+      .map((r) => `<tr>${r.map((c) => `<td>${c}</td>`).join("")}</tr>`)
+      .join("")}</tbody>`;
+    return `<table class="wp-block-table">${thead}${tbody}</table>`;
+  });
   html = html
     .split("\n\n")
     .map((block) => {
@@ -470,14 +491,18 @@ async function generateOne() {
   try {
     const todayArts = await supa("GET", `articles?created_at=gte.${today}&select=niche_id`);
     const nicheCounts = {};
-    for (const a of (todayArts || [])) {
+    for (const a of todayArts || []) {
       nicheCounts[a.niche_id] = (nicheCounts[a.niche_id] || 0) + 1;
     }
     overloadedNicheIds = new Set(
-      Object.entries(nicheCounts).filter(([, c]) => c >= 3).map(([id]) => id)
+      Object.entries(nicheCounts)
+        .filter(([, c]) => c >= 3)
+        .map(([id]) => id)
     );
     if (overloadedNicheIds.size > 0) {
-      console.log(`   🔄 Niche rotation: avoiding overloaded niches today (${overloadedNicheIds.size} niches with 3+ articles)`);
+      console.log(
+        `   🔄 Niche rotation: avoiding overloaded niches today (${overloadedNicheIds.size} niches with 3+ articles)`
+      );
     }
   } catch {}
 
@@ -512,15 +537,24 @@ async function generateOne() {
     return aOverloaded - bOverloaded; // non-overloaded first
   });
   for (const candidate of sortedKeywords) {
-    const failedRows = await supa("GET", `articles?keyword_id=eq.${candidate.id}&status=eq.qa_failed&select=id`).catch(() => []);
+    const failedRows = await supa(
+      "GET",
+      `articles?keyword_id=eq.${candidate.id}&status=eq.qa_failed&select=id`
+    ).catch(() => []);
     const failCount = Array.isArray(failedRows) ? failedRows.length : 0;
     if (failCount >= 3) {
-      console.log(`   ⏭️  Skip "${candidate.keyword}" — already failed QA ${failCount}× (marking exhausted)`);
-      await supa("PATCH", `keywords?id=eq.${candidate.id}`, { status: "qa_failed" }).catch(() => {});
+      console.log(
+        `   ⏭️  Skip "${candidate.keyword}" — already failed QA ${failCount}× (marking exhausted)`
+      );
+      await supa("PATCH", `keywords?id=eq.${candidate.id}`, { status: "qa_failed" }).catch(
+        () => {}
+      );
       continue;
     }
     if (failCount > 0) {
-      console.log(`   ⚠️  "${candidate.keyword}" failed QA ${failCount}× before — attempting again with extra effort`);
+      console.log(
+        `   ⚠️  "${candidate.keyword}" failed QA ${failCount}× before — attempting again with extra effort`
+      );
     }
     kw = candidate;
     break;
@@ -590,7 +624,9 @@ Required sections (all mandatory):
 5. How to Choose (decision guide)
 6. FAQ`,
     };
-    const typeGuide = typeRequirements[kw.article_type] || `ARTICLE TYPE: ${(kw.article_type || "guide").toUpperCase()}
+    const typeGuide =
+      typeRequirements[kw.article_type] ||
+      `ARTICLE TYPE: ${(kw.article_type || "guide").toUpperCase()}
 Ensure deep coverage with at least 8 substantive H2 sections.`;
 
     // Outline — try cache first (used when previous draft failed mid-generation)
@@ -735,7 +771,9 @@ Output: the COMPLETE expanded markdown article starting with # heading. No pream
       // original — we already met the minimum-viable threshold by entering this
       // pass, so a regression is worse than no-op.
       if (newWords < currentWords) {
-        console.log(`${ts()} ⚠️  Expansion regressed (${currentWords}w → ${newWords}w) — keeping original`);
+        console.log(
+          `${ts()} ⚠️  Expansion regressed (${currentWords}w → ${newWords}w) — keeping original`
+        );
         return text;
       }
       console.log(`${ts()} ✅ Expanded: ${currentWords}w → ${newWords}w`);
@@ -745,7 +783,9 @@ Output: the COMPLETE expanded markdown article starting with # heading. No pream
     // ── Pass 1: Pre-polish expansion if draft is short ────────────────────
     let finalDraftText = draftRes.text;
     const draftWords = draftRes.text.split(/\s+/).length;
-    console.log(`${ts()} 📏 Draft: ${draftWords}w (gen elapsed ${((Date.now()-genStart)/1000).toFixed(1)}s)`);
+    console.log(
+      `${ts()} 📏 Draft: ${draftWords}w (gen elapsed ${((Date.now() - genStart) / 1000).toFixed(1)}s)`
+    );
     if (draftWords < 2000) {
       finalDraftText = await runExpansionPass(draftRes.text, draftWords, 2600);
     }
@@ -785,7 +825,9 @@ STRICT RULES:
 
     // ── Pass 2: Post-polish rescue if polish trimmed too much ─────────────
     const postPolishWords = polishRes.text.split(/\s+/).length;
-    console.log(`${ts()} 📏 Post-polish: ${postPolishWords}w (was ${polishWords}w, gen elapsed ${((Date.now()-genStart)/1000).toFixed(1)}s)`);
+    console.log(
+      `${ts()} 📏 Post-polish: ${postPolishWords}w (was ${polishWords}w, gen elapsed ${((Date.now() - genStart) / 1000).toFixed(1)}s)`
+    );
     let finalText = polishRes.text;
     if (postPolishWords < 1900) {
       console.log(`   🚨 Polish trimmed too much! Running rescue expansion...`);
@@ -859,7 +901,12 @@ Rules: Start with the "${faqHeading}" heading. Each question as "###" sub-headin
         if (namesRes.usage) totalCost += estimateCost("gpt-4o-mini", namesRes.usage);
         const names = (namesRes.text || "")
           .split("\n")
-          .map((s) => s.replace(/^[\d.)\-*\s]+/, "").replace(/[*_`]/g, "").trim())
+          .map((s) =>
+            s
+              .replace(/^[\d.)\-*\s]+/, "")
+              .replace(/[*_`]/g, "")
+              .trim()
+          )
           .filter((s) => s && s.length >= 2 && s.length < 40);
         if (names.length > 0) {
           // Keyed deterministic replacement (Tool A/Herramienta A/[Tool]/…) with the
@@ -883,12 +930,16 @@ Rules: Start with the "${faqHeading}" heading. Each question as "###" sub-headin
           );
           finalText = fixed;
           const after = detectToolPlaceholders(finalText).length;
-          console.log(`${ts()} 🩹 Placeholder rescue: filled with ${names.slice(0, 3).join(", ")} (${after} remaining)`);
+          console.log(
+            `${ts()} 🩹 Placeholder rescue: filled with ${names.slice(0, 3).join(", ")} (${after} remaining)`
+          );
         } else {
           console.log(`${ts()} 🩹 Placeholder rescue: no usable names returned — leaving for QA`);
         }
       } catch (e) {
-        console.log(`${ts()} ⚠️  Placeholder rescue failed: ${(e.message || String(e)).slice(0, 60)}`);
+        console.log(
+          `${ts()} ⚠️  Placeholder rescue failed: ${(e.message || String(e)).slice(0, 60)}`
+        );
       }
     }
 
@@ -917,13 +968,23 @@ Rules: Start with the "${faqHeading}" heading. Each question as "###" sub-headin
     let correctedType = kw.article_type;
     const kwLower = kw.keyword.toLowerCase();
     if (/\bvs\.?\b|versus/.test(kwLower) && correctedType !== "comparison") {
-      console.log(`   🔧 Auto-corrected article_type: ${correctedType} → comparison (keyword has "vs")`);
+      console.log(
+        `   🔧 Auto-corrected article_type: ${correctedType} → comparison (keyword has "vs")`
+      );
       correctedType = "comparison";
-    } else if (/^best\b|top \d+|top-\d+/.test(kwLower) && correctedType !== "list" && correctedType !== "review") {
-      console.log(`   🔧 Auto-corrected article_type: ${correctedType} → list (keyword starts with "Best"/"Top N")`);
+    } else if (
+      /^best\b|top \d+|top-\d+/.test(kwLower) &&
+      correctedType !== "list" &&
+      correctedType !== "review"
+    ) {
+      console.log(
+        `   🔧 Auto-corrected article_type: ${correctedType} → list (keyword starts with "Best"/"Top N")`
+      );
       correctedType = "list";
     } else if (/^how (to|do|can|should)\b/i.test(kwLower) && correctedType !== "how-to") {
-      console.log(`   🔧 Auto-corrected article_type: ${correctedType} → how-to (keyword starts with "How")`);
+      console.log(
+        `   🔧 Auto-corrected article_type: ${correctedType} → how-to (keyword starts with "How")`
+      );
       correctedType = "how-to";
     }
 
@@ -1006,7 +1067,10 @@ Return JSON: { "variants": ["Title 1", "Title 2"] }`,
       try {
         let artId = null;
         if (dupSlug) {
-          const existing = await supa("GET", `articles?slug=eq.${encodeURIComponent(dupSlug)}&select=id&limit=1`);
+          const existing = await supa(
+            "GET",
+            `articles?slug=eq.${encodeURIComponent(dupSlug)}&select=id&limit=1`
+          );
           artId = Array.isArray(existing) && existing[0] ? existing[0].id : null;
         }
         await supa("PATCH", `keywords?id=eq.${kw.id}`, {
@@ -1014,7 +1078,9 @@ Return JSON: { "variants": ["Title 1", "Title 2"] }`,
           ...(artId ? { assigned_article_id: artId } : {}),
         });
         clearOutlineCache(kw.id);
-        console.log(`   ⚠️  Slug "${dupSlug || "?"}" already existed — reconciled keyword (no re-queue).`);
+        console.log(
+          `   ⚠️  Slug "${dupSlug || "?"}" already existed — reconciled keyword (no re-queue).`
+        );
         return { reconciled: true, reason: `duplicate slug ${dupSlug || ""}`.trim() };
       } catch (_) {
         // reconciliation itself failed — fall through to the normal re-queue
@@ -1044,7 +1110,8 @@ function qualityGate(article) {
   // qa_failing 9/run when polish trimmed 3000w drafts to 1100-1199w. The
   // content at that length is still publish-worthy; the min-viable approve
   // path below picks up 1000-1099w cases.
-  if (!article.word_count || article.word_count < 1100) issues.push(`too short: ${article.word_count}w (min 1100)`);
+  if (!article.word_count || article.word_count < 1100)
+    issues.push(`too short: ${article.word_count}w (min 1100)`);
 
   // Title
   if (!article.title || article.title.length < 20) issues.push("title too short");
@@ -1150,7 +1217,9 @@ function qualityGate(article) {
     const coverage = citableSections / countedSections;
     if (coverage < 0.6) {
       // Soft flag — log only, doesn't block publish yet
-      console.log(`   ℹ️  Citation Capsule coverage: ${citableSections}/${countedSections} H2s (${(coverage * 100).toFixed(0)}%) — target ≥60%`);
+      console.log(
+        `   ℹ️  Citation Capsule coverage: ${citableSections}/${countedSections} H2s (${(coverage * 100).toFixed(0)}%) — target ≥60%`
+      );
     }
   }
 
@@ -1164,9 +1233,12 @@ function qualityGate(article) {
     const exactCount = (bodyLower.match(new RegExp(kwEscaped, "g")) || []).length;
     const meaningfulWords = kw.split(/\s+/).filter((w) => w.length >= 4);
     const matchedWords = meaningfulWords.filter((w) => bodyLower.includes(w));
-    const wordCoverage = meaningfulWords.length > 0 ? matchedWords.length / meaningfulWords.length : 1;
+    const wordCoverage =
+      meaningfulWords.length > 0 ? matchedWords.length / meaningfulWords.length : 1;
     if (exactCount < 1 && wordCoverage < 0.7) {
-      issues.push(`keyword "${kw}" never appears verbatim and only ${Math.round(wordCoverage * 100)}% of words present (min 70%)`);
+      issues.push(
+        `keyword "${kw}" never appears verbatim and only ${Math.round(wordCoverage * 100)}% of words present (min 70%)`
+      );
     }
   }
 
@@ -1219,7 +1291,10 @@ function qaFailurePatch(issues, fallbackCode = "qa_failed") {
     status: "qa_failed",
     quality_score: 0,
     qa_issues: structured,
-    last_error: structured.map((issue) => issue.message).join(", ").slice(0, 1000),
+    last_error: structured
+      .map((issue) => issue.message)
+      .join(", ")
+      .slice(0, 1000),
     last_error_at: new Date().toISOString(),
     last_qa_at: new Date().toISOString(),
     repair_status: structured.every((issue) => issue.repairable) ? "repairable" : "blocked",
@@ -1249,8 +1324,39 @@ function runWpLanguageBridgeProbe() {
   };
 }
 
+// The bridge probe runs in a freshly spawned process with its own connection
+// pool (NOT covered by publishAllDrafts' warmUp), so it eats Hostinger's
+// cold-start / intermittent "fetch failed" directly. A single transient failure
+// would skip ALL Spanish drafts for the whole run (the 2026-06-16 incident).
+// Re-warm the host and retry a few times so an intermittent blip doesn't block
+// Spanish publishing — a genuinely-down bridge still fails after all attempts.
+async function probeWpLanguageBridgeWithRetry(attempts = 3) {
+  let last = { pass: false, output: "" };
+  for (let i = 1; i <= attempts; i++) {
+    await warmUp({ log: false }).catch(() => {});
+    last = runWpLanguageBridgeProbe();
+    if (last.pass) {
+      if (i > 1) console.log(`   ✅ Language bridge probe passed on attempt ${i}/${attempts}`);
+      return last;
+    }
+    if (i < attempts) {
+      console.log(
+        `   ⏳ Language bridge probe failed (attempt ${i}/${attempts}); re-warming + retrying in 4s...`
+      );
+      await new Promise((r) => setTimeout(r, 4000));
+    }
+  }
+  return last;
+}
+
 // --- DALL-E image generation + Unsplash fallback ---
-async function generateFeaturedImage(title, slug, postId, articleType = "article", primaryKeyword = "") {
+async function generateFeaturedImage(
+  title,
+  slug,
+  postId,
+  articleType = "article",
+  primaryKeyword = ""
+) {
   const auth = Buffer.from(`${WP_USERNAME}:${WP_ADMIN_PASSWORD}`).toString("base64");
 
   async function uploadBufferToWP(buffer, mimeType = "image/jpeg") {
@@ -1308,7 +1414,7 @@ async function generateFeaturedImage(title, slug, postId, articleType = "article
         prompt: imgPrompt,
         n: 1,
         size: "1536x1024", // landscape; gpt-image-1 has no 1792x1024
-        quality: "low",     // abstract art → "low" looks fine and keeps cost ~$0.02/img
+        quality: "low", // abstract art → "low" looks fine and keeps cost ~$0.02/img
       }),
       signal: AbortSignal.timeout(90_000),
     });
@@ -1338,7 +1444,9 @@ async function generateFeaturedImage(title, slug, postId, articleType = "article
     if (!imgUrl) throw new Error("No image URL from Unsplash");
     const imgRes = await fetch(imgUrl, { signal: AbortSignal.timeout(20_000) });
     const buffer = Buffer.from(await imgRes.arrayBuffer());
-    console.log(`   📸 Unsplash fallback: "${photo.alt_description || query}" by ${photo.user?.name}`);
+    console.log(
+      `   📸 Unsplash fallback: "${photo.alt_description || query}" by ${photo.user?.name}`
+    );
     return await uploadBufferToWP(buffer, "image/jpeg");
   } catch (e) {
     console.log(`   ⚠️ Unsplash fallback failed: ${e.message.slice(0, 60)}`);
@@ -1367,19 +1475,24 @@ function buildSchemaBlock(article, wpLink, imageUrl, categorySlug) {
 // --- Enhanced comparison table HTML (richer styles for comparison articles) ---
 function enhanceComparisonTables(html) {
   // Replace plain <table> with styled comparison tables
-  return html.replace(
-    /<table class="wp-block-table">([\s\S]*?)<\/table>/g,
-    (match, inner) => {
-      // Only enhance tables that look like comparisons (have Feature/Tool/Price headers)
-      const isComparison = /<th>(Feature|Plan|Price|Rating|Tool|Metric|Criteria)/i.test(inner);
-      if (!isComparison) return match;
-      return `<table class="wp-block-table aipickd-comparison-table" style="width:100%;border-collapse:collapse;margin:24px 0;font-size:0.95rem;">${inner
-        .replace(/<th>/g, '<th style="background:#1e3a5f;color:#fff;padding:10px 14px;text-align:left;font-weight:600;">')
-        .replace(/<td>/g, '<td style="padding:9px 14px;border-bottom:1px solid #e5e7eb;vertical-align:top;">')
-        .replace(/<tr>/g, '<tr style="transition:background 0.15s;" onmouseover="this.style.background=\'#f0f7ff\'" onmouseout="this.style.background=\'\'">')
-      }</table>`;
-    }
-  );
+  return html.replace(/<table class="wp-block-table">([\s\S]*?)<\/table>/g, (match, inner) => {
+    // Only enhance tables that look like comparisons (have Feature/Tool/Price headers)
+    const isComparison = /<th>(Feature|Plan|Price|Rating|Tool|Metric|Criteria)/i.test(inner);
+    if (!isComparison) return match;
+    return `<table class="wp-block-table aipickd-comparison-table" style="width:100%;border-collapse:collapse;margin:24px 0;font-size:0.95rem;">${inner
+      .replace(
+        /<th>/g,
+        '<th style="background:#1e3a5f;color:#fff;padding:10px 14px;text-align:left;font-weight:600;">'
+      )
+      .replace(
+        /<td>/g,
+        '<td style="padding:9px 14px;border-bottom:1px solid #e5e7eb;vertical-align:top;">'
+      )
+      .replace(
+        /<tr>/g,
+        '<tr style="transition:background 0.15s;" onmouseover="this.style.background=\'#f0f7ff\'" onmouseout="this.style.background=\'\'">'
+      )}</table>`;
+  });
 }
 
 // --- Best Deal callout box (injected before FAQ for affiliate articles) ---
@@ -1387,17 +1500,21 @@ function injectBestDeal(html, affiliateLinks) {
   if (!affiliateLinks || affiliateLinks.length === 0) return html;
   // Build callout with top 3 affiliate links
   const topLinks = affiliateLinks.slice(0, 3);
-  const linkHtml = topLinks.map(({name, url}, i) => {
-    const badges = ['🥇 Best Overall', '🥈 Runner-Up', '🥉 Budget Pick'];
-    return `<li style="margin:6px 0;"><strong>${badges[i] || '✅'}:</strong> <a href="${url}" rel="nofollow sponsored" target="_blank" style="color:#2563eb;font-weight:600;">${name}</a></li>`;
-  }).join('');
+  const linkHtml = topLinks
+    .map(({ name, url }, i) => {
+      const badges = ["🥇 Best Overall", "🥈 Runner-Up", "🥉 Budget Pick"];
+      return `<li style="margin:6px 0;"><strong>${badges[i] || "✅"}:</strong> <a href="${url}" rel="nofollow sponsored" target="_blank" style="color:#2563eb;font-weight:600;">${name}</a></li>`;
+    })
+    .join("");
 
   const callout = `\n<!-- wp:html -->\n<div class="aipickd-best-deal" style="background:linear-gradient(135deg,#f0f9ff,#e0f2fe);border:2px solid #0ea5e9;border-radius:8px;padding:20px 24px;margin:32px 0;">\n  <h3 style="margin:0 0 12px;font-size:1.1rem;color:#0c4a6e;">🏆 Best Deals Right Now</h3>\n  <ul style="list-style:none;padding:0;margin:0;">${linkHtml}</ul>\n  <p style="margin:12px 0 0;font-size:0.8rem;color:#64748b;">Prices may vary. We may earn a commission at no extra cost to you.</p>\n</div>\n<!-- /wp:html -->\n\n`;
 
   // Insert before FAQ section or before the last H2
   const faqMatch = html.match(/<h2[^>]*>(?:FAQ|Frequently Asked Questions)/i);
   if (faqMatch) {
-    return html.slice(0, html.indexOf(faqMatch[0])) + callout + html.slice(html.indexOf(faqMatch[0]));
+    return (
+      html.slice(0, html.indexOf(faqMatch[0])) + callout + html.slice(html.indexOf(faqMatch[0]))
+    );
   }
   // Fallback: append before last </p> block
   const lastH2 = [...html.matchAll(/<h2/g)].at(-2);
@@ -1410,14 +1527,14 @@ function injectBestDeal(html, affiliateLinks) {
 // --- Cloudflare cache purge for a URL ---
 async function purgeCloudflareCache(url) {
   const CF_TOKEN = env.CLOUDFLARE_API_TOKEN;
-  const CF_ZONE  = env.CLOUDFLARE_ZONE_ID;
+  const CF_ZONE = env.CLOUDFLARE_ZONE_ID;
   if (!CF_TOKEN || !CF_ZONE) return; // Skip if not configured
   try {
     const res = await fetch(`https://api.cloudflare.com/client/v4/zones/${CF_ZONE}/purge_cache`, {
-      method: 'POST',
+      method: "POST",
       headers: {
-        'Authorization': `Bearer ${CF_TOKEN}`,
-        'Content-Type': 'application/json',
+        Authorization: `Bearer ${CF_TOKEN}`,
+        "Content-Type": "application/json",
       },
       body: JSON.stringify({ files: [url] }),
       signal: AbortSignal.timeout(10000),
@@ -1431,11 +1548,11 @@ async function purgeCloudflareCache(url) {
 }
 
 // --- Outline cache: save/load outlines for retry on failure ---
-const OUTLINE_CACHE_DIR = path.join(__dirname, '..', '.outline-cache');
+const OUTLINE_CACHE_DIR = path.join(__dirname, "..", ".outline-cache");
 function saveOutlineCache(keywordId, outline) {
   try {
-    if (!require('fs').existsSync(OUTLINE_CACHE_DIR)) require('fs').mkdirSync(OUTLINE_CACHE_DIR);
-    require('fs').writeFileSync(
+    if (!require("fs").existsSync(OUTLINE_CACHE_DIR)) require("fs").mkdirSync(OUTLINE_CACHE_DIR);
+    require("fs").writeFileSync(
       path.join(OUTLINE_CACHE_DIR, `${keywordId}.json`),
       JSON.stringify({ outline, savedAt: new Date().toISOString() })
     );
@@ -1444,35 +1561,39 @@ function saveOutlineCache(keywordId, outline) {
 function loadOutlineCache(keywordId) {
   try {
     const p = path.join(OUTLINE_CACHE_DIR, `${keywordId}.json`);
-    if (!require('fs').existsSync(p)) return null;
-    const data = JSON.parse(require('fs').readFileSync(p, 'utf8'));
+    if (!require("fs").existsSync(p)) return null;
+    const data = JSON.parse(require("fs").readFileSync(p, "utf8"));
     // Only use cache if < 48h old
     if (Date.now() - new Date(data.savedAt).getTime() > 48 * 3600000) return null;
     return data.outline;
-  } catch { return null; }
+  } catch {
+    return null;
+  }
 }
 function clearOutlineCache(keywordId) {
-  try { require('fs').unlinkSync(path.join(OUTLINE_CACHE_DIR, `${keywordId}.json`)); } catch {}
+  try {
+    require("fs").unlinkSync(path.join(OUTLINE_CACHE_DIR, `${keywordId}.json`));
+  } catch {}
 }
 
 // --- Format numbers in markdown (1000 → 1,000 | 1500000 → $1.5M) ---
 function formatNumbers(text) {
   // Format large plain integers (not inside URLs, code blocks, or already formatted)
-  return text
-    .replace(/(?<![/$€£¥,.\w])(\d{4,})(?!\d|,|\.|%|\w)/g, (m, n) => {
-      const num = parseInt(n, 10);
-      if (num >= 1_000_000) return (num / 1_000_000).toFixed(1).replace(/\.0$/, "") + "M";
-      if (num >= 10_000)    return num.toLocaleString("en-US");
-      return m;
-    });
+  return text.replace(/(?<![/$€£¥,.\w])(\d{4,})(?!\d|,|\.|%|\w)/g, (m, n) => {
+    const num = parseInt(n, 10);
+    if (num >= 1_000_000) return (num / 1_000_000).toFixed(1).replace(/\.0$/, "") + "M";
+    if (num >= 10_000) return num.toLocaleString("en-US");
+    return m;
+  });
 }
 
 // --- Affiliate disclosure block (FTC compliance) ---
 function affiliateDisclosure(language = "en") {
   const lang = normalizeLanguage(language);
-  const text = lang === "es"
-    ? `⚡ <strong>Aviso:</strong> Este artículo contiene enlaces de afiliado. Si compras a través de nuestros enlaces, podríamos ganar una comisión sin costo extra para ti. Solo recomendamos herramientas que probamos y en las que confiamos.`
-    : `⚡ <strong>Disclosure:</strong> This article contains affiliate links. If you purchase through our links, we may earn a commission at no extra cost to you. We only recommend tools we've evaluated and trust.`;
+  const text =
+    lang === "es"
+      ? `⚡ <strong>Aviso:</strong> Este artículo contiene enlaces de afiliado. Si compras a través de nuestros enlaces, podríamos ganar una comisión sin costo extra para ti. Solo recomendamos herramientas que probamos y en las que confiamos.`
+      : `⚡ <strong>Disclosure:</strong> This article contains affiliate links. If you purchase through our links, we may earn a commission at no extra cost to you. We only recommend tools we've evaluated and trust.`;
   return `<!-- wp:html -->\n<div class="aipickd-disclosure" style="background:#f0f7ff;border-left:4px solid #2563eb;padding:12px 16px;margin:0 0 24px;border-radius:4px;font-size:0.875rem;color:#374151;">\n  ${text}\n</div>\n<!-- /wp:html -->\n\n`;
 }
 
@@ -1498,7 +1619,9 @@ Rules:
     );
     const data = JSON.parse(res.text);
     return Array.isArray(data.tags) ? data.tags.slice(0, 15) : [];
-  } catch { return []; }
+  } catch {
+    return [];
+  }
 }
 
 // --- Ping search engines to index new URL ---
@@ -1509,7 +1632,7 @@ async function pingSearchEngines(url) {
     `https://yandex.com/indexnow?url=${encodeURIComponent(url)}&key=${key}`,
     `https://api.indexnow.org/indexnow?url=${encodeURIComponent(url)}&key=${key}`,
   ];
-  await Promise.allSettled(engines.map(e => fetch(e, { signal: AbortSignal.timeout(8000) })));
+  await Promise.allSettled(engines.map((e) => fetch(e, { signal: AbortSignal.timeout(8000) })));
   console.log(`   🔍 IndexNow pinged (Bing + Yandex + IndexNow API) for: ${url.slice(-60)}`);
 }
 
@@ -1537,7 +1660,9 @@ async function publishAllDrafts(maxCount = 10) {
     );
     const archivedCount = Array.isArray(archived) ? archived.length : 0;
     if (archivedCount > 0) {
-      trace(`🗄️  auto-archived ${archivedCount} draft(s) older than 7 days (stuck without wp_post_id)`);
+      trace(
+        `🗄️  auto-archived ${archivedCount} draft(s) older than 7 days (stuck without wp_post_id)`
+      );
       notifyAlert(
         `🗄️ **Auto-archived ${archivedCount} stuck draft(s)** (>7 days old, never published to WP). Cleared from publish queue.`,
         "info"
@@ -1560,7 +1685,10 @@ async function publishAllDrafts(maxCount = 10) {
     // A transient Supabase network blip isn't a broken pipeline — don't fire a
     // CRITICAL for it; the next run retries. Real errors still alert.
     if (!isTransientNetworkError(e)) {
-      notifyAlert(`🚨 **publishAllDrafts: drafts query failed**\n\`\`\`\n${msg}\n\`\`\``, "critical").catch(() => {});
+      notifyAlert(
+        `🚨 **publishAllDrafts: drafts query failed**\n\`\`\`\n${msg}\n\`\`\``,
+        "critical"
+      ).catch(() => {});
     }
     throw e;
   }
@@ -1574,17 +1702,25 @@ async function publishAllDrafts(maxCount = 10) {
     try {
       const directRes = await fetch(
         `${SUPABASE_URL}/rest/v1/articles?status=eq.draft&wp_post_id=is.null&select=id&limit=20`,
-        { headers: { apikey: SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` }, signal: AbortSignal.timeout(15_000) }
+        {
+          headers: {
+            apikey: SUPABASE_SERVICE_ROLE_KEY,
+            Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          },
+          signal: AbortSignal.timeout(15_000),
+        }
       );
       const rawText = await directRes.text();
       let directCount = "?";
-      try { directCount = JSON.parse(rawText).length; } catch {}
+      try {
+        directCount = JSON.parse(rawText).length;
+      } catch {}
       trace(`sanity raw fetch → status=${directRes.status} drafts=${directCount}`);
       if (typeof directCount === "number" && directCount > 0) {
         notifyAlert(
           `🚨 **publishAllDrafts mismatch!** supa() returned 0 drafts but a raw fetch found ${directCount}. ` +
-          `That means the helper, fetchWithRetry, or SSRF allowlist is corrupting the response.\n\n` +
-          `Raw body[0:300]: \`${rawText.slice(0, 300).replace(/`/g, "'")}\``,
+            `That means the helper, fetchWithRetry, or SSRF allowlist is corrupting the response.\n\n` +
+            `Raw body[0:300]: \`${rawText.slice(0, 300).replace(/`/g, "'")}\``,
           "critical"
         ).catch(() => {});
       }
@@ -1599,9 +1735,17 @@ async function publishAllDrafts(maxCount = 10) {
   let skippedCount = 0;
 
   // Pre-load published titles for duplicate detection
-  const publishedArticles = await supa("GET", "articles?status=eq.published&select=title,slug").catch(() => []);
-  const normalizeTitle = (s) => (s || "").toLowerCase().replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, " ").trim();
-  const publishedTitles = (publishedArticles || []).map(a => normalizeTitle(a.title));
+  const publishedArticles = await supa(
+    "GET",
+    "articles?status=eq.published&select=title,slug"
+  ).catch(() => []);
+  const normalizeTitle = (s) =>
+    (s || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+  const publishedTitles = (publishedArticles || []).map((a) => normalizeTitle(a.title));
   trace(`pre-loaded ${publishedTitles.length} published titles for dup detection`);
 
   // Warm the (possibly 4h-idle) Hostinger shared host BEFORE the first WP call.
@@ -1647,8 +1791,8 @@ async function publishAllDrafts(maxCount = 10) {
   // of what happens inside it.
   notifyAlert(
     `📤 **publishAllDrafts iter starting**\n` +
-    `Drafts: ${drafts.length} · Published titles: ${publishedTitles.length} · ` +
-    `WP cats: ${Array.isArray(cats) ? cats.length : "?"} · WP_STATUS: \`${WP_STATUS}\``,
+      `Drafts: ${drafts.length} · Published titles: ${publishedTitles.length} · ` +
+      `WP cats: ${Array.isArray(cats) ? cats.length : "?"} · WP_STATUS: \`${WP_STATUS}\``,
     "info"
   ).catch(() => {});
 
@@ -1666,7 +1810,7 @@ async function publishAllDrafts(maxCount = 10) {
     // Duplicate detection — skip if very similar title already published.
     if (normalizeLanguage(article.language) === "es") {
       if (wpLanguageBridgeOk === null) {
-        const probe = runWpLanguageBridgeProbe();
+        const probe = await probeWpLanguageBridgeWithRetry();
         wpLanguageBridgeOk = probe.pass;
         if (!probe.pass) {
           const msg = `WordPress language bridge probe failed; Spanish publishing is blocked. ${probe.output.slice(0, 700)}`;
@@ -1676,7 +1820,9 @@ async function publishAllDrafts(maxCount = 10) {
       }
       if (!wpLanguageBridgeOk) {
         skippedCount++;
-        console.log("   BLOCKER: Spanish article skipped because _pipeline_lang=es could not be verified.");
+        console.log(
+          "   BLOCKER: Spanish article skipped because _pipeline_lang=es could not be verified."
+        );
         continue;
       }
     }
@@ -1712,7 +1858,11 @@ async function publishAllDrafts(maxCount = 10) {
     if (isDuplicate) {
       skippedCount++;
       console.log(`   ⏩ skip "${article.title.slice(0, 50)}": duplicate of published article`);
-      await supa("PATCH", `articles?id=eq.${article.id}`, qaFailurePatch(["duplicate of published article"], "duplicate")).catch(() => {});
+      await supa(
+        "PATCH",
+        `articles?id=eq.${article.id}`,
+        qaFailurePatch(["duplicate of published article"], "duplicate")
+      ).catch(() => {});
       await markKeywordForArticle(article, "qa_failed");
       continue;
     }
@@ -1759,23 +1909,36 @@ async function publishAllDrafts(maxCount = 10) {
       const countFix = repairListCountTitle(article);
       if (countFix.changed) {
         article.title = countFix.title;
-        await supa("PATCH", `articles?id=eq.${article.id}`, { title: article.title }).catch(() => {});
+        await supa("PATCH", `articles?id=eq.${article.id}`, { title: article.title }).catch(
+          () => {}
+        );
         console.log(`   🔢 List-count title repair: ${countFix.from} → ${countFix.to} tools`);
       }
       qa = qualityGate(article);
     } catch (prepErr) {
       skippedCount++;
-      console.log(`   ⏩ skip "${article.title?.slice(0, 50)}": QA prep threw — ${(prepErr?.message || String(prepErr)).slice(0, 120)}`);
-      await supa("PATCH", `articles?id=eq.${article.id}`, { status: "qa_failed", quality_score: 0 }).catch(() => {});
+      console.log(
+        `   ⏩ skip "${article.title?.slice(0, 50)}": QA prep threw — ${(prepErr?.message || String(prepErr)).slice(0, 120)}`
+      );
+      await supa("PATCH", `articles?id=eq.${article.id}`, {
+        status: "qa_failed",
+        quality_score: 0,
+      }).catch(() => {});
       continue;
     }
     // Minimum Viable Approve: if only issue is "too short" (1000-1099w), auto-approve to avoid stalls
     let qaPass = qa.pass;
-    if (!qa.pass && qa.issues.length === 1 && qaIssueMessage(qa.issues[0]).startsWith("too short")) {
+    if (
+      !qa.pass &&
+      qa.issues.length === 1 &&
+      qaIssueMessage(qa.issues[0]).startsWith("too short")
+    ) {
       const wc = article.word_count || 0;
       const qScore = calcQualityScore(wc, []);
       if (wc >= 1000 && qScore >= 50) {
-        console.log(`   ✅ Min-viable approve: ${wc}w / score ${qScore} — accepting borderline article`);
+        console.log(
+          `   ✅ Min-viable approve: ${wc}w / score ${qScore} — accepting borderline article`
+        );
         qaPass = true;
       }
     }
@@ -1831,18 +1994,25 @@ async function publishAllDrafts(maxCount = 10) {
       }
 
       // Enhance comparison tables with richer styling
-      if (article.article_type === 'comparison' || article.article_type === 'list') {
+      if (article.article_type === "comparison" || article.article_type === "list") {
         html = enhanceComparisonTables(html);
       }
 
       // Inject Best Deal callout for affiliate articles that have active affiliates linked
-      const mentioned = Array.isArray(article.affiliates_mentioned) ? article.affiliates_mentioned : [];
+      const mentioned = Array.isArray(article.affiliates_mentioned)
+        ? article.affiliates_mentioned
+        : [];
       if (mentioned.length >= 2) {
         try {
-          const affIds = mentioned.slice(0, 5).join(',');
-          const affiliatesForDeal = await supa("GET", `affiliates?id=in.(${affIds})&status=eq.active&select=id,brand,base_url`);
+          const affIds = mentioned.slice(0, 5).join(",");
+          const affiliatesForDeal = await supa(
+            "GET",
+            `affiliates?id=in.(${affIds})&status=eq.active&select=id,brand,base_url`
+          );
           if (Array.isArray(affiliatesForDeal) && affiliatesForDeal.length >= 2) {
-            const dealLinks = affiliatesForDeal.slice(0, 3).map(a => ({ name: a.brand, url: a.base_url }));
+            const dealLinks = affiliatesForDeal
+              .slice(0, 3)
+              .map((a) => ({ name: a.brand, url: a.base_url }));
             html = injectBestDeal(html, dealLinks);
           }
         } catch {}
@@ -1864,11 +2034,17 @@ async function publishAllDrafts(maxCount = 10) {
         );
         for (const tagName of tagSlugs) {
           try {
-            const existingRes = await wp("GET", `tags?search=${encodeURIComponent(tagName)}&per_page=1`);
+            const existingRes = await wp(
+              "GET",
+              `tags?search=${encodeURIComponent(tagName)}&per_page=1`
+            );
             if (Array.isArray(existingRes) && existingRes.length > 0) {
               tagIds.push(existingRes[0].id);
             } else {
-              const newTag = await wp("POST", "tags", { name: tagName, slug: tagName.replace(/\s+/g, "-") });
+              const newTag = await wp("POST", "tags", {
+                name: tagName,
+                slug: tagName.replace(/\s+/g, "-"),
+              });
               if (newTag?.id) tagIds.push(newTag.id);
             }
           } catch {}
@@ -1891,7 +2067,9 @@ async function publishAllDrafts(maxCount = 10) {
       ).catch(() => []);
       if (Array.isArray(existingByKey) && existingByKey.length > 0 && existingByKey[0].wp_post_id) {
         const dup = existingByKey[0];
-        console.log(`   ⏩ skip "${article.title.slice(0, 50)}": idempotent match (wp_post_id=${dup.wp_post_id})`);
+        console.log(
+          `   ⏩ skip "${article.title.slice(0, 50)}": idempotent match (wp_post_id=${dup.wp_post_id})`
+        );
         await supa("PATCH", `articles?id=eq.${article.id}`, {
           status: "published",
           wp_post_id: dup.wp_post_id,
@@ -1910,10 +2088,15 @@ async function publishAllDrafts(maxCount = 10) {
       }
 
       // Guard: skip if a post with this slug already exists in WordPress
-      const existingBySlug = await wp("GET", `posts?slug=${encodeURIComponent(article.slug)}&_fields=id,link`).catch(() => []);
+      const existingBySlug = await wp(
+        "GET",
+        `posts?slug=${encodeURIComponent(article.slug)}&_fields=id,link`
+      ).catch(() => []);
       if (Array.isArray(existingBySlug) && existingBySlug.length > 0) {
         const existing = existingBySlug[0];
-        console.log(`   ⏩ skip "${article.title.slice(0, 50)}": already in WP (id=${existing.id})`);
+        console.log(
+          `   ⏩ skip "${article.title.slice(0, 50)}": already in WP (id=${existing.id})`
+        );
         await supa("PATCH", `articles?id=eq.${article.id}`, {
           status: "published",
           wp_post_id: existing.id,
@@ -1951,8 +2134,11 @@ async function publishAllDrafts(maxCount = 10) {
       // Post-publish: add image + schema + ping
       if (WP_STATUS === "publish") {
         const imgUrl = await generateFeaturedImage(
-          article.title, article.slug, wpPost.id,
-          article.article_type, article.primary_keyword
+          article.title,
+          article.slug,
+          wpPost.id,
+          article.article_type,
+          article.primary_keyword
         );
         // ALWAYS inject schema — decoupled from image success. Schema is a
         // top CTR lever (breadcrumbs, review stars, dates) and must NOT depend
@@ -1961,7 +2147,10 @@ async function publishAllDrafts(maxCount = 10) {
         // this whole block. The schema builder falls back to the default OG
         // image when imgUrl is null.
         const schemaBlock = buildSchemaBlock(
-          article, wpPost.link, imgUrl || null, NICHE_TO_CATEGORY_SLUG[article.niche?.slug]
+          article,
+          wpPost.link,
+          imgUrl || null,
+          NICHE_TO_CATEGORY_SLUG[article.niche?.slug]
         );
         await wp("POST", `posts/${wpPost.id}`, { content: html + schemaBlock });
         if (imgUrl) {
@@ -1988,7 +2177,9 @@ async function publishAllDrafts(maxCount = 10) {
         wp_url: wpPost.link,
       });
       published.push({ title: article.title, wp_id: wpPost.id, url: wpPost.link });
-      console.log(`   ✓ ${WP_STATUS === "publish" ? "LIVE" : "Draft"} WP #${wpPost.id}: ${article.title.slice(0, 55)}`);
+      console.log(
+        `   ✓ ${WP_STATUS === "publish" ? "LIVE" : "Draft"} WP #${wpPost.id}: ${article.title.slice(0, 55)}`
+      );
 
       // Post-publish URL verification (async, non-blocking)
       if (WP_STATUS === "publish" && wpPost.link) {
@@ -2007,7 +2198,9 @@ async function publishAllDrafts(maxCount = 10) {
             } else {
               console.log(`   ✅ URL verified: ${verifyRes.status} (${wpPost.link.slice(-40)})`);
             }
-          } catch (e) { /* non-fatal */ }
+          } catch (e) {
+            /* non-fatal */
+          }
         }, 8000); // Wait 8s for WP cache to warm up
       }
       // Fire-and-forget rich Discord notification
@@ -2018,8 +2211,11 @@ async function publishAllDrafts(maxCount = 10) {
         const affiliateNames = [];
         try {
           if (article.affiliates_mentioned && article.affiliates_mentioned.length > 0) {
-            const affData = await supa("GET", `affiliates?id=in.(${article.affiliates_mentioned.join(',')})&select=brand`);
-            if (Array.isArray(affData)) affiliateNames.push(...affData.map(a => a.brand));
+            const affData = await supa(
+              "GET",
+              `affiliates?id=in.(${article.affiliates_mentioned.join(",")})&select=brand`
+            );
+            if (Array.isArray(affData)) affiliateNames.push(...affData.map((a) => a.brand));
           }
         } catch {}
         notifyArticle(
@@ -2029,7 +2225,7 @@ async function publishAllDrafts(maxCount = 10) {
           affiliateNames,
           qScore,
           article.featured_image_url || null,
-          article.article_type || 'article'
+          article.article_type || "article"
         ).catch(() => {});
       }
     } catch (e) {
@@ -2056,9 +2252,9 @@ async function publishAllDrafts(maxCount = 10) {
         : "";
       notifyAlert(
         `🚫 **Publish failed:** ${article.title?.slice(0, 80)}\n` +
-        `**Error${errStatus}:** \`${errMsg.slice(0, 300)}\`\n` +
-        `**Article ID:** \`${article.id}\` · **Slug:** \`${article.slug}\`\n` +
-        `\`\`\`\n${errStack.slice(0, 400)}\n\`\`\`${remediation}`,
+          `**Error${errStatus}:** \`${errMsg.slice(0, 300)}\`\n` +
+          `**Article ID:** \`${article.id}\` · **Slug:** \`${article.slug}\`\n` +
+          `\`\`\`\n${errStack.slice(0, 400)}\n\`\`\`${remediation}`,
         isAuthFail ? "critical" : "warning"
       ).catch(() => {});
       // Tag the article with the failure so the dashboard / next-run logic
@@ -2075,9 +2271,11 @@ async function publishAllDrafts(maxCount = 10) {
 
     const articleMs = Date.now() - articleStart;
     if (articleMs > ARTICLE_PUBLISH_BUDGET_MS) {
-      console.log(`${ts()} ⚠️  Article publish took ${(articleMs/1000).toFixed(1)}s (exceeded ${ARTICLE_PUBLISH_BUDGET_MS/1000}s budget) — possible upstream slowness`);
+      console.log(
+        `${ts()} ⚠️  Article publish took ${(articleMs / 1000).toFixed(1)}s (exceeded ${ARTICLE_PUBLISH_BUDGET_MS / 1000}s budget) — possible upstream slowness`
+      );
     } else {
-      console.log(`${ts()} ⏱️  Article publish: ${(articleMs/1000).toFixed(1)}s`);
+      console.log(`${ts()} ⏱️  Article publish: ${(articleMs / 1000).toFixed(1)}s`);
     }
   }
   return { count: published.length, published, skipped: skippedCount };
@@ -2088,7 +2286,7 @@ async function publishAllDrafts(maxCount = 10) {
 // so a stuck run can be diagnosed without re-running locally.
 function ts() {
   const d = new Date();
-  return `[${String(d.getUTCHours()).padStart(2,"0")}:${String(d.getUTCMinutes()).padStart(2,"0")}:${String(d.getUTCSeconds()).padStart(2,"0")}Z]`;
+  return `[${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}:${String(d.getUTCSeconds()).padStart(2, "0")}Z]`;
 }
 
 // 20-min soft warning — Discord ping BEFORE the 45-min workflow timeout fires,
@@ -2161,7 +2359,9 @@ function startSoftTimeoutWarning(label = "pipeline") {
       : "keywords?status=eq.in_progress&select=id,keyword";
     const orphans = await supa("GET", orphanEndpoint);
     if (Array.isArray(orphans) && orphans.length > 0) {
-      console.log(`${ts()} 🔓 Found ${orphans.length} orphan keyword(s) stuck in_progress — resetting to queued`);
+      console.log(
+        `${ts()} 🔓 Found ${orphans.length} orphan keyword(s) stuck in_progress — resetting to queued`
+      );
       const patchEndpoint = ONLY_KEYWORD_ID
         ? `keywords?id=eq.${encodeURIComponent(ONLY_KEYWORD_ID)}&status=eq.in_progress`
         : "keywords?status=eq.in_progress";
@@ -2184,7 +2384,10 @@ function startSoftTimeoutWarning(label = "pipeline") {
           // A poisoned keyword (its article already existed) was just cleared.
           // Don't count it — try ANOTHER keyword so the run still produces.
           // Capped so a burst of poisoned keywords can't loop forever.
-          if (++dupRetries <= 5) { i--; continue; }
+          if (++dupRetries <= 5) {
+            i--;
+            continue;
+          }
           console.log(`   Stopped after ${dupRetries} duplicate reconciliations this run.`);
           break;
         }
@@ -2232,7 +2435,7 @@ function startSoftTimeoutWarning(label = "pipeline") {
     if (published > 0) {
       // Ping sitemap after publishing (async, non-blocking)
       try {
-        const sitemapUrl = `https://www.bing.com/indexnow?url=${encodeURIComponent('https://aipickd.com/sitemap.xml')}&key=${env.INDEXNOW_KEY || 'aipickd2026'}`;
+        const sitemapUrl = `https://www.bing.com/indexnow?url=${encodeURIComponent("https://aipickd.com/sitemap.xml")}&key=${env.INDEXNOW_KEY || "aipickd2026"}`;
         fetch(sitemapUrl, { signal: AbortSignal.timeout(8000) }).catch(() => {});
         console.log(`   🗺️  Sitemap ping fired (Bing)`);
       } catch {}
@@ -2245,10 +2448,13 @@ function startSoftTimeoutWarning(label = "pipeline") {
     // --- Niche diversity check — alert if 3+ articles from same niche today ---
     try {
       const today = new Date().toISOString().slice(0, 10);
-      const todayPublished = await supa("GET", `articles?published_at=gte.${today}&status=eq.published&select=niche_id,niche:niches(name)`);
+      const todayPublished = await supa(
+        "GET",
+        `articles?published_at=gte.${today}&status=eq.published&select=niche_id,niche:niches(name)`
+      );
       if (Array.isArray(todayPublished) && todayPublished.length >= 3) {
         const nicheCounts = {};
-        todayPublished.forEach(a => {
+        todayPublished.forEach((a) => {
           const name = a.niche?.name || a.niche_id || "unknown";
           nicheCounts[name] = (nicheCounts[name] || 0) + 1;
         });
@@ -2315,17 +2521,14 @@ function startSoftTimeoutWarning(label = "pipeline") {
     const runIdLink = process.env.GITHUB_RUN_ID
       ? `https://github.com/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`
       : null;
-    await notifyPipeline(
-      `✅ Pipeline completado en ${secs}s`,
-      {
-        articlesGenerated: generated,
-        articlesPublished: published,
-        qaFailed: skipped,
-        costUsd: totalGenCost,
-        budgetPct: Number(costPct),
-        runUrl: runIdLink,
-      }
-    );
+    await notifyPipeline(`✅ Pipeline completado en ${secs}s`, {
+      articlesGenerated: generated,
+      articlesPublished: published,
+      qaFailed: skipped,
+      costUsd: totalGenCost,
+      budgetPct: Number(costPct),
+      runUrl: runIdLink,
+    });
   } catch {}
 })().catch(async (e) => {
   const message = (e?.message || String(e)).slice(0, 500);
