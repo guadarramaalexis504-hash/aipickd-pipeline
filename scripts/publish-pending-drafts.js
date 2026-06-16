@@ -25,16 +25,12 @@ const { buildRecoveryPublishPlan } = require("./lib/recovery-publisher");
 const { repairSpanishResidual } = require("./lib/quality");
 const { keywordStateForArticle, normalizeLanguage } = require("./lib/spanish-gate");
 const { notifyAlert } = require("./notify.js");
+const { warmUp } = require("./lib/warmup");
 const { spawnSync } = require("node:child_process");
 const path = require("node:path");
 
 const env = loadEnv();
-const {
-  SUPABASE_URL,
-  SUPABASE_SERVICE_ROLE_KEY,
-  WP_USERNAME,
-  WP_ADMIN_PASSWORD,
-} = env;
+const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, WP_USERNAME, WP_ADMIN_PASSWORD } = env;
 
 const args = process.argv.slice(2);
 const LIMIT = parseInt(args[args.indexOf("--limit") + 1]) || 5;
@@ -59,7 +55,9 @@ const SUPA_HEADERS = {
   "Content-Type": "application/json",
   Prefer: "return=representation",
 };
-const WP_AUTH = HAS_WP_AUTH ? "Basic " + Buffer.from(`${WP_USERNAME}:${WP_ADMIN_PASSWORD}`).toString("base64") : null;
+const WP_AUTH = HAS_WP_AUTH
+  ? "Basic " + Buffer.from(`${WP_USERNAME}:${WP_ADMIN_PASSWORD}`).toString("base64")
+  : null;
 const UA = "Mozilla/5.0 (compatible; AIPickd-PublishManual/1.0)";
 
 function ts() {
@@ -68,18 +66,29 @@ function ts() {
 }
 
 async function supaGet(path) {
-  const r = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, { headers: SUPA_HEADERS, signal: AbortSignal.timeout(15_000) });
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+    headers: SUPA_HEADERS,
+    signal: AbortSignal.timeout(15_000),
+  });
   if (!r.ok) throw new Error(`Supabase GET ${path}: ${r.status} ${(await r.text()).slice(0, 200)}`);
   return r.json();
 }
 async function supaPatch(path, body) {
-  const r = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, { method: "PATCH", headers: SUPA_HEADERS, body: JSON.stringify(body), signal: AbortSignal.timeout(15_000) });
-  if (!r.ok) throw new Error(`Supabase PATCH ${path}: ${r.status} ${(await r.text()).slice(0, 200)}`);
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+    method: "PATCH",
+    headers: SUPA_HEADERS,
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!r.ok)
+    throw new Error(`Supabase PATCH ${path}: ${r.status} ${(await r.text()).slice(0, 200)}`);
   return r.json();
 }
 async function wpReq(method, endpoint, body) {
   if (!HAS_WP_AUTH) {
-    throw new Error("WP auth missing; unavailable in report-only mode without WP_USERNAME / WP_ADMIN_PASSWORD");
+    throw new Error(
+      "WP auth missing; unavailable in report-only mode without WP_USERNAME / WP_ADMIN_PASSWORD"
+    );
   }
   const r = await fetch(`https://aipickd.com/wp-json/wp/v2/${endpoint}`, {
     method,
@@ -101,16 +110,41 @@ async function wpReq(method, endpoint, body) {
   return text ? JSON.parse(text) : null;
 }
 
-function ensureWpLanguageBridgeForSpanish(language) {
+async function ensureWpLanguageBridgeForSpanish(language) {
   if (normalizeLanguage(language) !== "es") return true;
-  const probe = spawnSync(process.execPath, [path.join(__dirname, "wp-language-bridge-probe.js")], {
-    cwd: path.join(__dirname, ".."),
-    encoding: "utf8",
-    timeout: 60_000,
-  });
-  if (probe.status === 0) return true;
-  const out = `${probe.stdout || ""}${probe.stderr || ""}`.trim();
-  console.error(`${ts()} BLOCKER: WordPress language bridge probe did not pass. Spanish publishing is blocked.`);
+  // The probe runs in a spawned process that eats Hostinger's cold-start /
+  // intermittent "fetch failed" from the GitHub runner directly. A single
+  // transient failure would block Spanish publishing for the whole run (the
+  // 2026-06-16 incident). Re-warm the host + retry a few times before giving
+  // up; a genuinely-misconfigured bridge still fails after all attempts.
+  const attempts = 3;
+  let out = "";
+  for (let i = 1; i <= attempts; i++) {
+    await warmUp({ log: false }).catch(() => {});
+    const probe = spawnSync(
+      process.execPath,
+      [path.join(__dirname, "wp-language-bridge-probe.js")],
+      {
+        cwd: path.join(__dirname, ".."),
+        encoding: "utf8",
+        timeout: 60_000,
+      }
+    );
+    if (probe.status === 0) {
+      if (i > 1) console.log(`${ts()} ✅ Language bridge probe passed on attempt ${i}/${attempts}`);
+      return true;
+    }
+    out = `${probe.stdout || ""}${probe.stderr || ""}`.trim();
+    if (i < attempts) {
+      console.log(
+        `${ts()} ⏳ Language bridge probe failed (attempt ${i}/${attempts}); re-warming + retrying in 4s...`
+      );
+      await new Promise((r) => setTimeout(r, 4000));
+    }
+  }
+  console.error(
+    `${ts()} BLOCKER: WordPress language bridge probe did not pass after ${attempts} attempts. Spanish publishing is blocked.`
+  );
   if (out) console.error(out.slice(0, 1200));
   return false;
 }
@@ -159,7 +193,10 @@ function mdToHtml(md) {
   h = h.replace(/^# (.+)$/gm, "<h1>$1</h1>");
   h = h.replace(/\*\*([^\*]+)\*\*/g, "<strong>$1</strong>");
   h = h.replace(/\*([^\*]+)\*/g, "<em>$1</em>");
-  h = h.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" rel="nofollow sponsored" target="_blank">$1</a>');
+  h = h.replace(
+    /\[([^\]]+)\]\(([^)]+)\)/g,
+    '<a href="$2" rel="nofollow sponsored" target="_blank">$1</a>'
+  );
   h = h.replace(/^> (.+)$/gm, "<blockquote>$1</blockquote>");
   h = h.replace(/^- (.+)$/gm, "<li>$1</li>");
   h = h.replace(/(<li>.*<\/li>\n?)+/g, (m) => `<ul>\n${m}</ul>\n`);
@@ -175,7 +212,9 @@ function mdToHtml(md) {
 }
 
 (async () => {
-  console.log(`${ts()} ▶ publish-pending-drafts (limit=${LIMIT}, mode=${DRY_RUN ? "REPORT ONLY" : "WRITE --go"})`);
+  console.log(
+    `${ts()} ▶ publish-pending-drafts (limit=${LIMIT}, mode=${DRY_RUN ? "REPORT ONLY" : "WRITE --go"})`
+  );
 
   // 1. Pre-flight: confirm WP auth works BEFORE we touch any drafts.
   if (HAS_WP_AUTH) {
@@ -189,9 +228,9 @@ function mdToHtml(md) {
         console.error(`${ts()} ❌ WP auth FAILED (${e.status}): ${e.message}`);
         notifyAlert(
           `🚨 **publish-pending-drafts pre-flight failed**\n` +
-          `WP auth returned ${e.status}.\n` +
-          `Action: regenerate the Application Password at \`/wp-admin/profile.php\` and update \`WP_ADMIN_PASSWORD\` in GitHub Secrets.\n` +
-          `Error: \`${e.message?.slice(0, 200)}\``,
+            `WP auth returned ${e.status}.\n` +
+            `Action: regenerate the Application Password at \`/wp-admin/profile.php\` and update \`WP_ADMIN_PASSWORD\` in GitHub Secrets.\n` +
+            `Error: \`${e.message?.slice(0, 200)}\``,
           "critical"
         ).catch(() => {});
       } else {
@@ -200,8 +239,8 @@ function mdToHtml(md) {
         console.error(`${ts()} ⚠️  WP unreachable (network, not auth): ${e.message}`);
         notifyAlert(
           `⚠️ **publish-pending-drafts skipped: WordPress unreachable**\n` +
-          `Network error reaching WP (likely a Hostinger cold-start/blip) — this is NOT an auth problem, the password is fine. Drafts will publish on the next run.\n` +
-          `Error: \`${(e.message || "").slice(0, 200)}\``,
+            `Network error reaching WP (likely a Hostinger cold-start/blip) — this is NOT an auth problem, the password is fine. Drafts will publish on the next run.\n` +
+            `Error: \`${(e.message || "").slice(0, 200)}\``,
           "warning"
         ).catch(() => {});
       }
@@ -209,12 +248,16 @@ function mdToHtml(md) {
       return;
     }
   } else {
-    console.log(`${ts()} pre-flight: WP auth check skipped (missing credentials; report-only, no writes)`);
+    console.log(
+      `${ts()} pre-flight: WP auth check skipped (missing credentials; report-only, no writes)`
+    );
   }
 
   // 2. Fetch pending drafts (raw, no JOIN — keeps the query simple).
   const onlyFilter = ONLY_ID ? `&id=eq.${encodeURIComponent(ONLY_ID)}` : "";
-  const drafts = await supaGet(`articles?status=eq.draft&wp_post_id=is.null${onlyFilter}&order=created_at.asc&limit=${ONLY_ID ? 1 : LIMIT}&select=id,title,slug,meta_description,content_markdown,article_type,word_count,niche_id,keyword_id,language,primary_keyword,quality_score`);
+  const drafts = await supaGet(
+    `articles?status=eq.draft&wp_post_id=is.null${onlyFilter}&order=created_at.asc&limit=${ONLY_ID ? 1 : LIMIT}&select=id,title,slug,meta_description,content_markdown,article_type,word_count,niche_id,keyword_id,language,primary_keyword,quality_score`
+  );
   console.log(`${ts()} fetched ${drafts.length} draft(s)${ONLY_ID ? ` (only=${ONLY_ID})` : ""}`);
 
   if (drafts.length === 0) {
@@ -238,7 +281,8 @@ function mdToHtml(md) {
   };
 
   // 5. Iterate
-  let published = 0, failed = 0;
+  let published = 0,
+    failed = 0;
   for (const a of drafts) {
     const t0 = Date.now();
     console.log(`${ts()} 📤 "${a.title?.slice(0, 60)}"`);
@@ -268,34 +312,45 @@ function mdToHtml(md) {
         .replace(/\[\/AFFILIATE\]/gi, "");
       const language = normalizeLanguage(a.language);
       const renderedHtml = mdToHtml(md);
-      const plan = buildRecoveryPublishPlan({ ...a, language, content_markdown: md, content_html: renderedHtml });
+      const plan = buildRecoveryPublishPlan({
+        ...a,
+        language,
+        content_markdown: md,
+        content_html: renderedHtml,
+      });
       let html = `${plan.disclosure}${renderedHtml}`;
       const nicheSlug = nicheBySlug[a.niche_id];
       const catId = nicheCatMap[nicheSlug];
 
       if (DRY_RUN) {
         console.log(`${ts()} report-only plan:`);
-        console.log(JSON.stringify({
-          article_id: plan.articleId,
-          slug: plan.slug,
-          will_write: false,
-          language: plan.language,
-          planned_wp_meta: plan.wpMeta,
-          planned_category: catId || null,
-          wp_auth: HAS_WP_AUTH ? "available" : "missing_not_required_report_only",
-          idempotency_key: plan.idempotencyKey,
-          qa: {
-            pass: plan.qa.pass,
-            issues: plan.qa.issues,
-          },
-          schema: plan.schema,
-          indexnow: plan.indexNow,
-          html_bytes: html.length,
-        }, null, 2));
+        console.log(
+          JSON.stringify(
+            {
+              article_id: plan.articleId,
+              slug: plan.slug,
+              will_write: false,
+              language: plan.language,
+              planned_wp_meta: plan.wpMeta,
+              planned_category: catId || null,
+              wp_auth: HAS_WP_AUTH ? "available" : "missing_not_required_report_only",
+              idempotency_key: plan.idempotencyKey,
+              qa: {
+                pass: plan.qa.pass,
+                issues: plan.qa.issues,
+              },
+              schema: plan.schema,
+              indexnow: plan.indexNow,
+              html_bytes: html.length,
+            },
+            null,
+            2
+          )
+        );
         continue;
       }
 
-      if (!ensureWpLanguageBridgeForSpanish(language)) {
+      if (!(await ensureWpLanguageBridgeForSpanish(language))) {
         failed++;
         await supaPatch(`articles?id=eq.${a.id}`, {
           status: "needs_repair",
@@ -363,7 +418,10 @@ function mdToHtml(md) {
       }
 
       // Guard: slug already in WP?
-      const existing = await wpReq("GET", `posts?slug=${encodeURIComponent(a.slug)}&_fields=id,link`).catch(() => []);
+      const existing = await wpReq(
+        "GET",
+        `posts?slug=${encodeURIComponent(a.slug)}&_fields=id,link`
+      ).catch(() => []);
       if (Array.isArray(existing) && existing.length > 0) {
         const e = existing[0];
         console.log(`${ts()} ⏩ already in WP (id=${e.id}) — linking`);
@@ -397,10 +455,13 @@ function mdToHtml(md) {
         },
       });
 
-      const schemas = buildSchemas({ ...a, language, content_markdown: md }, {
-        url: post.link,
-        categorySlug: NICHE_TO_CATEGORY_SLUG[nicheSlug],
-      });
+      const schemas = buildSchemas(
+        { ...a, language, content_markdown: md },
+        {
+          url: post.link,
+          categorySlug: NICHE_TO_CATEGORY_SLUG[nicheSlug],
+        }
+      );
       if (schemas.length > 0) {
         html += renderSchemaBlock(schemas);
         await wpReq("POST", `posts/${post.id}`, { content: html });
@@ -423,14 +484,16 @@ function mdToHtml(md) {
       submitIndexNow(post.link).catch(() => {});
 
       published++;
-      console.log(`${ts()} ✅ published #${post.id} in ${((Date.now() - t0) / 1000).toFixed(1)}s — ${post.link}`);
+      console.log(
+        `${ts()} ✅ published #${post.id} in ${((Date.now() - t0) / 1000).toFixed(1)}s — ${post.link}`
+      );
     } catch (e) {
       failed++;
       console.error(`${ts()} ❌ "${a.title?.slice(0, 60)}": ${e.message?.slice(0, 200)}`);
       notifyAlert(
         `🚫 **publish-pending-drafts iter failed**\n` +
-        `Article: \`${a.id}\` · \`${a.slug}\`\n` +
-        `Error: \`${e.message?.slice(0, 300)}\``,
+          `Article: \`${a.id}\` · \`${a.slug}\`\n` +
+          `Error: \`${e.message?.slice(0, 300)}\``,
         "warning"
       ).catch(() => {});
     }
