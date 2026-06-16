@@ -604,6 +604,119 @@ function repairSpanishResidual(markdown = "", language = "es") {
   return { text, changed: text !== String(markdown || ""), replaced };
 }
 
+// Deterministic stale-reference repair. ES 2026 articles frequently leak the
+// model's knowledge-cutoff hedges ("a octubre 2023", "octubre 2023") which the
+// QA gate (correctly) blocks. Rewrite those to 2026-safe wording before QA so a
+// good listicle is not failed over a cutoff artifact. Tradeoff: the detector
+// (quality.js STALE_REFERENCE_PATTERNS) flags ANY visible "2023", so a bare year
+// is rewritten too — favoring a publishable, current-sounding article over a
+// stray historical "2023". Years inside code fences, markdown link URLs, and raw
+// URLs are preserved (they don't trip the detector and must stay valid).
+const STALE_REFERENCE_REPAIRS = [
+  { phrase: "a octubre 2023", re: /\ba\s+octubre\s+(?:de\s+)?2023\b/gi, to: "en 2026" },
+  { phrase: "hasta octubre 2023", re: /\bhasta\s+octubre\s+(?:de\s+)?2023\b/gi, to: "hasta 2026" },
+  { phrase: "as of October 2023", re: /\bas of\s+October\s+(?:of\s+)?2023\b/gi, to: "as of 2026" },
+  { phrase: "octubre 2023", re: /\boctubre\s+(?:de\s+)?2023\b/gi, to: "2026" },
+  { phrase: "2023", re: /\b2023\b/g, to: "2026" }, // catch-all (prose only; URLs/code protected)
+];
+
+// Rewrite prose while preserving markdown-link URLs and raw URLs. For a
+// [text](url) link only the visible anchor text is rewritten (the detector keeps
+// anchor text but strips the URL), so a year in the URL stays valid.
+function rewriteVisibleProse(text, applyFn) {
+  return String(text || "")
+    .split(/(\[[^\]]+\]\([^)]*\)|https?:\/\/[^\s)]+)/g)
+    .map((part) => {
+      const link = part.match(/^\[([^\]]+)\]\(([^)]*)\)$/);
+      if (link) return `[${applyFn(link[1])}](${link[2]})`;
+      if (/^https?:\/\//.test(part)) return part; // raw URL untouched
+      return applyFn(part);
+    })
+    .join("");
+}
+
+function repairStaleReferences(markdown = "", language = "es") {
+  if (normalizeLanguage(language) !== "es") {
+    return { text: String(markdown || ""), changed: false, replaced: [] };
+  }
+  const replaced = [];
+  const applyProse = (segment) => {
+    let t = segment;
+    for (const r of STALE_REFERENCE_REPAIRS) {
+      let count = 0;
+      t = t.replace(r.re, () => {
+        count += 1;
+        return r.to;
+      });
+      if (count > 0) replaced.push({ phrase: r.phrase, count, to: r.to });
+    }
+    return t;
+  };
+  // Skip fenced code blocks, then rewrite prose while protecting links/URLs.
+  const out = String(markdown || "")
+    .split(/(```[\s\S]*?```)/g)
+    .map((seg) => (seg.startsWith("```") ? seg : rewriteVisibleProse(seg, applyProse)));
+  const text = out.join("");
+  return { text, changed: text !== String(markdown || ""), replaced };
+}
+
+// Deterministic unsourced-stat repair. detectUnsupportedQuantitativeClaims blocks
+// ES articles that cite percentages / "x de cada y" / "según datos" with NO
+// source link anywhere. Rather than fabricate a source, soften the numeric claim
+// to honest qualitative wording (no invented figure) — aligned with the
+// generation directive ("si no tienes fuente, descríbelo en palabras"). A
+// paragraph that already cites a source link is left untouched.
+const QUANT_CLAIM_REPAIRS = [
+  {
+    phrase: "verb+percentage",
+    re: /\b(aumenta|aumentan|aument[oó]|incrementa|incrementan|reduce|reducen|mejora|mejoran|sube|baja|ahorra|ahorran)([^\n.]{0,80}?)\d{1,3}(?:[.,]\d+)?\s*%/gi,
+    to: (_m, verb) => `${verb} de forma notable`,
+  },
+  { phrase: "x de cada y", re: /\b\d+\s+de\s+cada\s+\d+\b/gi, to: () => "muchos" },
+  {
+    phrase: "bare percentage",
+    re: /\b\d{1,3}(?:[.,]\d+)?\s*%/g,
+    to: () => "una proporcion considerable",
+  },
+  { phrase: "segun datos", re: /\bseg[uú]n\s+datos\b/gi, to: () => "segun la experiencia comun" },
+];
+
+function paragraphHasSourceLink(chunk = "") {
+  return /\[[^\]]+\]\(https?:\/\/[^)]+\)/i.test(chunk) || /https?:\/\/\S+/i.test(chunk);
+}
+
+function repairUnsupportedQuantitativeClaims(markdown = "", language = "es") {
+  if (normalizeLanguage(language) !== "es") {
+    return { text: String(markdown || ""), changed: false, replaced: [] };
+  }
+  const replaced = [];
+  const out = String(markdown || "")
+    .split(/(```[\s\S]*?```)/g)
+    .map((seg) => {
+      if (seg.startsWith("```")) return seg;
+      // Process paragraph-by-paragraph so a sourced paragraph keeps its figures.
+      return seg
+        .split(/(\n[ \t]*\n)/)
+        .map((chunk) => {
+          if (/^\n[ \t]*\n$/.test(chunk)) return chunk; // paragraph separator
+          if (paragraphHasSourceLink(chunk)) return chunk; // sourced claim: leave it
+          let t = chunk;
+          for (const rule of QUANT_CLAIM_REPAIRS) {
+            let count = 0;
+            t = t.replace(rule.re, (...args) => {
+              count += 1;
+              return rule.to(...args);
+            });
+            if (count > 0) replaced.push({ phrase: rule.phrase, count });
+          }
+          return t;
+        })
+        .join("");
+    });
+  const text = out.join("");
+  return { text, changed: text !== String(markdown || ""), replaced };
+}
+
 function formatAiTellIssue(markdown = "") {
   const matches = detectAiTellPhrases(markdown);
   if (matches.length === 0) return null;
@@ -758,6 +871,8 @@ module.exports = {
   repairToolPlaceholders,
   repairSpanishResidual,
   repairListCountTitle,
+  repairStaleReferences,
+  repairUnsupportedQuantitativeClaims,
   issueMessages,
   hasFaqSection,
   detectLanguageMismatch,

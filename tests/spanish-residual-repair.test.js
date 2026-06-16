@@ -2,7 +2,15 @@
 
 const { test } = require("node:test");
 const assert = require("node:assert");
-const { repairSpanishResidual, repairListCountTitle } = require("../scripts/lib/quality");
+const {
+  repairSpanishResidual,
+  repairListCountTitle,
+  repairStaleReferences,
+  repairUnsupportedQuantitativeClaims,
+  detectStaleReferences,
+  detectUnsupportedQuantitativeClaims,
+  qualityGate,
+} = require("../scripts/lib/quality");
 
 function toolSection(name) {
   return `## ${name}\nEs una herramienta real con descripción suficiente para contar como desarrollada. Precio aproximado y casos de uso.\n`;
@@ -98,4 +106,116 @@ test("reports what it replaced", () => {
   const phrases = out.replaced.map((r) => r.phrase);
   assert.ok(phrases.includes("FAQ"));
   assert.ok(phrases.includes("Pricing"));
+});
+
+// ── repairStaleReferences ────────────────────────────────────────────────
+test("repairStaleReferences rewrites 'a octubre 2023' to 2026-safe wording in ES", () => {
+  const md = "# 7 IAs en 2026\n\n## Runway\nA octubre 2023, era una opcion frecuente.";
+  const out = repairStaleReferences(md, "es");
+  assert.ok(out.changed);
+  assert.doesNotMatch(out.text, /\boctubre 2023\b/i);
+  assert.doesNotMatch(out.text, /\b2023\b/);
+  // the detector must now find nothing on the repaired text
+  const stale = detectStaleReferences({
+    title: "7 IAs en 2026",
+    content_markdown: out.text,
+    language: "es",
+  });
+  assert.equal(stale.length, 0);
+});
+
+test("repairStaleReferences does NOT touch a year inside a markdown link URL", () => {
+  const md = "En 2026 ver [el informe](https://example.com/report-2023).";
+  const out = repairStaleReferences(md, "es");
+  assert.match(out.text, /https:\/\/example\.com\/report-2023/);
+});
+
+test("repairStaleReferences leaves fenced code blocks untouched", () => {
+  const md = "```\nconst y = 2023;\n```\n\nEn 2026, a octubre 2023 fue clave.";
+  const out = repairStaleReferences(md, "es");
+  assert.match(out.text, /```\nconst y = 2023;\n```/); // fenced 2023 survives
+  assert.doesNotMatch(out.text, /a octubre 2023/i); // prose hedge rewritten
+  assert.ok(out.changed);
+});
+
+test("repairStaleReferences is a no-op for English articles", () => {
+  const md = "Numbers like 2023 stay as of 2023.";
+  const out = repairStaleReferences(md, "en");
+  assert.equal(out.changed, false);
+  assert.equal(out.text, md);
+});
+
+// ── repairUnsupportedQuantitativeClaims ───────────────────────────────────
+test("repairUnsupportedQuantitativeClaims softens bare % and verb+% with no source link", () => {
+  const md = "# 7 IAs en 2026\n\nReduce hasta un 50% el tiempo y mejora 70% la calidad.";
+  const out = repairUnsupportedQuantitativeClaims(md, "es");
+  assert.ok(out.changed);
+  assert.doesNotMatch(out.text, /\d{1,3}\s*%/); // no digit-percent token remains
+  const claims = detectUnsupportedQuantitativeClaims({
+    content_markdown: out.text,
+    language: "es",
+  });
+  assert.equal(claims.length, 0);
+});
+
+test("repairUnsupportedQuantitativeClaims leaves a % that has a source link in the same paragraph", () => {
+  const md = "Segun [el estudio](https://src.example/x), mejora 70% la velocidad.";
+  const out = repairUnsupportedQuantitativeClaims(md, "es");
+  assert.match(out.text, /70%/); // sourced claim preserved
+  assert.equal(out.changed, false);
+});
+
+test("repairUnsupportedQuantitativeClaims is a no-op for English", () => {
+  const md = "Improves speed by 70% and 50%.";
+  const out = repairUnsupportedQuantitativeClaims(md, "en");
+  assert.equal(out.changed, false);
+  assert.equal(out.text, md);
+});
+
+// ── end-to-end: the exact draft that failed ───────────────────────────────
+test("full ES listicle (7 promised / 5 developed, octubre 2023, %s) passes QA after the repair sequence", () => {
+  function toolH2(name) {
+    return `## ${name}\nHerramienta real con descripcion suficiente, para que sirve, ejemplo de tarea, precio aproximado, ventajas y desventajas, y mejor caso de uso para cubrir el conteo.\n`;
+  }
+  const md = [
+    "Runway, Pika y otras opciones para crear videos con IA en 2026.",
+    toolH2("Runway"),
+    toolH2("Pika"),
+    toolH2("Synthesia"),
+    toolH2("HeyGen"),
+    toolH2("Descript"),
+    "A octubre 2023 estas apps eran nuevas; reduce hasta un 50% el tiempo de edicion y mejora 70% la calidad percibida.",
+    "## Preguntas frecuentes\n**¿Cual conviene?** Depende de tu presupuesto, idioma y tipo de video que quieras producir.",
+  ].join("\n\n");
+
+  const article = {
+    title: "7 IAs para crear videos: cuales convienen en 2026",
+    content_markdown: md,
+    language: "es",
+    word_count: 1800,
+  };
+
+  // apply the deterministic repair sequence (title count, then stale, then quant)
+  const countFix = repairListCountTitle(article);
+  assert.ok(countFix.changed);
+  assert.equal(countFix.to, 5);
+  assert.match(countFix.title, /^5 IAs/);
+
+  let body = repairStaleReferences(article.content_markdown, "es").text;
+  body = repairUnsupportedQuantitativeClaims(body, "es").text;
+
+  const qa = qualityGate({
+    ...article,
+    title: countFix.title,
+    content_markdown: body,
+  });
+
+  const codes = qa.issues.map((i) => i.code);
+  assert.ok(!codes.includes("list_count_mismatch"), `unexpected: ${JSON.stringify(qa.issues)}`);
+  assert.ok(!codes.includes("stale_reference"), `unexpected: ${JSON.stringify(qa.issues)}`);
+  assert.ok(
+    !codes.includes("unsupported_quantitative_claim"),
+    `unexpected: ${JSON.stringify(qa.issues)}`
+  );
+  assert.equal(qa.pass, true, `qa.issues: ${JSON.stringify(qa.issues)}`);
 });

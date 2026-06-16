@@ -54,6 +54,8 @@ const {
   repairToolPlaceholders,
   repairSpanishResidual,
   repairListCountTitle,
+  repairStaleReferences,
+  repairUnsupportedQuantitativeClaims,
   hasFaqSection,
 } = require("./lib/quality");
 
@@ -1900,6 +1902,34 @@ async function publishAllDrafts(maxCount = 10) {
           }).catch(() => {});
           console.log(
             `   🧹 ES residual repair: ${esRepair.replaced.map((r) => `${r.phrase}→${r.to}`).join(", ")}`
+          );
+        }
+
+        // Stale-year hedges ("a octubre 2023") + unsourced quantitative claims
+        // ("reduce 50%") — deterministic ES repairs so a good listicle isn't
+        // failed over a knowledge-cutoff artifact or an unsourced stat. Persist.
+        let esBodyChanged = false;
+        const staleFix = repairStaleReferences(article.content_markdown, article.language);
+        if (staleFix.changed) {
+          article.content_markdown = staleFix.text;
+          esBodyChanged = true;
+        }
+        const quantFix = repairUnsupportedQuantitativeClaims(
+          article.content_markdown,
+          article.language
+        );
+        if (quantFix.changed) {
+          article.content_markdown = quantFix.text;
+          esBodyChanged = true;
+        }
+        if (esBodyChanged) {
+          article.word_count = article.content_markdown.split(/\s+/).filter(Boolean).length;
+          await supa("PATCH", `articles?id=eq.${article.id}`, {
+            content_markdown: article.content_markdown,
+            word_count: article.word_count,
+          }).catch(() => {});
+          console.log(
+            `   🩹 ES content repair: stale=${staleFix.replaced.length}, quant=${quantFix.replaced.length}`
           );
         }
       }

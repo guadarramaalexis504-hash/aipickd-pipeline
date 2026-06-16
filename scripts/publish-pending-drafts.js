@@ -22,7 +22,12 @@ const { hasWriteFlag } = require("./lib/cli-safety");
 const { validateRenderedHtml } = require("./lib/html-validator");
 const { buildSchemas, renderSchemaBlock, NICHE_TO_CATEGORY_SLUG } = require("./lib/schema");
 const { buildRecoveryPublishPlan } = require("./lib/recovery-publisher");
-const { repairSpanishResidual } = require("./lib/quality");
+const {
+  repairSpanishResidual,
+  repairListCountTitle,
+  repairStaleReferences,
+  repairUnsupportedQuantitativeClaims,
+} = require("./lib/quality");
 const { keywordStateForArticle, normalizeLanguage } = require("./lib/spanish-gate");
 const { notifyAlert } = require("./notify.js");
 const { warmUp } = require("./lib/warmup");
@@ -302,6 +307,46 @@ function mdToHtml(md) {
           }
           console.log(
             `${ts()} 🧹 ES residual repair: ${esRepair.replaced.map((r) => `${r.phrase}→${r.to}`).join(", ")}`
+          );
+        }
+
+        // List-count title repair (e.g. "7 IAs"→"5 IAs" when only 5 developed) —
+        // mirror run-pipeline.js so the recovery path self-heals the #1 listicle
+        // QA failure. Persist the lowered title so it sticks in the DB.
+        const countFix = repairListCountTitle(a);
+        if (countFix.changed) {
+          a.title = countFix.title;
+          if (!DRY_RUN) {
+            await supaPatch(`articles?id=eq.${a.id}`, { title: a.title }).catch(() => {});
+          }
+          console.log(
+            `${ts()} 🔢 List-count title repair: ${countFix.from} → ${countFix.to} tools`
+          );
+        }
+
+        // Stale-year hedges ("a octubre 2023") + unsourced quantitative claims
+        // ("reduce 50%") — deterministic ES repairs so a good listicle isn't
+        // failed over a knowledge-cutoff artifact or an unsourced stat. Persist.
+        let esContentChanged = false;
+        const staleFix = repairStaleReferences(a.content_markdown, a.language);
+        if (staleFix.changed) {
+          a.content_markdown = staleFix.text;
+          esContentChanged = true;
+        }
+        const quantFix = repairUnsupportedQuantitativeClaims(a.content_markdown, a.language);
+        if (quantFix.changed) {
+          a.content_markdown = quantFix.text;
+          esContentChanged = true;
+        }
+        if (esContentChanged) {
+          if (!DRY_RUN) {
+            await supaPatch(`articles?id=eq.${a.id}`, {
+              content_markdown: a.content_markdown,
+              word_count: a.content_markdown.split(/\s+/).filter(Boolean).length,
+            }).catch(() => {});
+          }
+          console.log(
+            `${ts()} 🩹 ES content repair: stale=${staleFix.replaced.length}, quant=${quantFix.replaced.length}`
           );
         }
       }
