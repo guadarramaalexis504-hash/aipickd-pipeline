@@ -18,7 +18,11 @@ test("repairListCountTitle lowers the title number to match developed tools", ()
     toolSection("Descript"),
     "## Preguntas frecuentes\n**¿Pregunta?** Respuesta.",
   ].join("\n\n");
-  const out = repairListCountTitle({ title: "7 Mejores IAs para Crear Videos en 2026", language: "es", content_markdown: md });
+  const out = repairListCountTitle({
+    title: "7 Mejores IAs para Crear Videos en 2026",
+    language: "es",
+    content_markdown: md,
+  });
   assert.ok(out.changed);
   assert.equal(out.to, 5);
   assert.match(out.title, /^5 Mejores IAs/);
@@ -34,13 +38,26 @@ test("repairListCountTitle bails when the promised number appears twice (avoids 
     "## Preguntas frecuentes\n**¿Q?** A.",
   ].join("\n\n");
   // developed 4, title promises 7 (twice) — must NOT produce "4 Mejores… solo 7 valen"
-  const out = repairListCountTitle({ title: "7 Mejores IAs para Escribir en 2026: solo 7 valen", language: "es", content_markdown: md });
+  const out = repairListCountTitle({
+    title: "7 Mejores IAs para Escribir en 2026: solo 7 valen",
+    language: "es",
+    content_markdown: md,
+  });
   assert.equal(out.changed, false);
 });
 
 test("repairListCountTitle is a no-op when count already matches", () => {
-  const md = ["# 2 Mejores IAs", toolSection("Runway"), toolSection("Pika"), "## Preguntas frecuentes\n**¿Q?** A."].join("\n\n");
-  const out = repairListCountTitle({ title: "2 Mejores IAs", language: "es", content_markdown: md });
+  const md = [
+    "# 2 Mejores IAs",
+    toolSection("Runway"),
+    toolSection("Pika"),
+    "## Preguntas frecuentes\n**¿Q?** A.",
+  ].join("\n\n");
+  const out = repairListCountTitle({
+    title: "2 Mejores IAs",
+    language: "es",
+    content_markdown: md,
+  });
   assert.equal(out.changed, false);
 });
 

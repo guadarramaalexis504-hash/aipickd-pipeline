@@ -47,10 +47,8 @@ jobs:
 
       - name: Add related-articles blocks
         run: |
-          WRITE=""
-          if [ "${{ github.event.inputs.go }}" = "true" ]; then WRITE="--go"; fi
-          ONLY=""
-          if [ -n "${{ github.event.inputs.only }}" ]; then ONLY="--only ${{ github.event.inputs.only }}"; fi
+          ARGS=()
           # Scheduled runs apply automatically; manual runs default to preview.
-          if [ "${{ github.event_name }}" = "schedule" ]; then WRITE="--go"; fi
-          node scripts/add-related-articles.js $WRITE $ONLY
+          if [ "${{ github.event.inputs.go }}" = "true" ] || [ "${{ github.event_name }}" = "schedule" ]; then ARGS+=(--go); fi
+          if [ -n "${{ github.event.inputs.only }}" ]; then ARGS+=(--only "${{ github.event.inputs.only }}"); fi
+          node scripts/add-related-articles.js "${ARGS[@]}"

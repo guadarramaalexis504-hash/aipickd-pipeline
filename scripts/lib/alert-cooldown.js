@@ -32,7 +32,8 @@ async function shouldAlert(signature, windowMs = 6 * 60 * 60 * 1000) {
     );
     if (!res.ok) return true; // table missing / error → don't silence
     const rows = await res.json();
-    const last = Array.isArray(rows) && rows[0]?.last_sent_at ? Date.parse(rows[0].last_sent_at) : 0;
+    const last =
+      Array.isArray(rows) && rows[0]?.last_sent_at ? Date.parse(rows[0].last_sent_at) : 0;
     if (last && Date.now() - last < windowMs) return false; // still within cooldown
     // Stamp now (upsert). Fire-and-forget — a failed stamp just means we might
     // alert again next run, which is the safe direction.

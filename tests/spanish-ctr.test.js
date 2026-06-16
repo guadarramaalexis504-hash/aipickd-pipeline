@@ -2,11 +2,21 @@
 
 const { test } = require("node:test");
 const assert = require("node:assert");
-const { SPANISH_TITLE_BLOCK, SPANISH_META_BLOCK, spanishSlugify } = require("../scripts/lib/spanish-ctr");
+const {
+  SPANISH_TITLE_BLOCK,
+  SPANISH_META_BLOCK,
+  spanishSlugify,
+} = require("../scripts/lib/spanish-ctr");
 
 test("spanishSlugify strips accents and ñ for URL-safe slugs", () => {
-  assert.equal(spanishSlugify("Comparación: ChatGPT vs Géminis ¿Cuál gana en 2026?"), "comparacion-chatgpt-vs-geminis-cual-gana-en-2026");
-  assert.equal(spanishSlugify("Mejor IA para diseñar logos en 2026"), "mejor-ia-para-disenar-logos-en-2026");
+  assert.equal(
+    spanishSlugify("Comparación: ChatGPT vs Géminis ¿Cuál gana en 2026?"),
+    "comparacion-chatgpt-vs-geminis-cual-gana-en-2026"
+  );
+  assert.equal(
+    spanishSlugify("Mejor IA para diseñar logos en 2026"),
+    "mejor-ia-para-disenar-logos-en-2026"
+  );
 });
 
 test("spanishSlugify is idempotent on an already-clean slug", () => {
@@ -15,7 +25,10 @@ test("spanishSlugify is idempotent on an already-clean slug", () => {
 });
 
 test("spanishSlugify keeps the year and drops trailing punctuation", () => {
-  assert.equal(spanishSlugify("¿Vale la pena pagar ChatGPT Plus? (2026)"), "vale-la-pena-pagar-chatgpt-plus-2026");
+  assert.equal(
+    spanishSlugify("¿Vale la pena pagar ChatGPT Plus? (2026)"),
+    "vale-la-pena-pagar-chatgpt-plus-2026"
+  );
 });
 
 test("the Spanish CTR blocks are non-trivial and ASCII-safe", () => {

@@ -10,10 +10,46 @@ const {
 } = require("../scripts/lib/related-articles");
 
 const corpus = [
-  { id: "1", title: "Jasper vs Copy.ai (2026)", slug: "jasper-vs-copy-ai-2026", language: "en", wp_url: "https://aipickd.com/jasper-vs-copy-ai-2026/", niche_id: "writing", primary_keyword: "jasper vs copy", published_at: "2026-06-01" },
-  { id: "2", title: "Best AI Writing Tools (2026)", slug: "best-ai-writing-tools-2026", language: "en", wp_url: "https://aipickd.com/best-ai-writing-tools-2026/", niche_id: "writing", primary_keyword: "ai writing tools", published_at: "2026-06-02" },
-  { id: "3", title: "Cursor vs Copilot (2026)", slug: "cursor-vs-copilot-2026", language: "en", wp_url: "https://aipickd.com/cursor-vs-copilot-2026/", niche_id: "coding", primary_keyword: "cursor vs copilot", published_at: "2026-06-03" },
-  { id: "4", title: "Mejores IA para escribir (2026)", slug: "mejores-ia-escribir-2026", language: "es", wp_url: "https://aipickd.com/es/mejores-ia-escribir-2026/", niche_id: "writing", primary_keyword: "ia para escribir", published_at: "2026-06-04" },
+  {
+    id: "1",
+    title: "Jasper vs Copy.ai (2026)",
+    slug: "jasper-vs-copy-ai-2026",
+    language: "en",
+    wp_url: "https://aipickd.com/jasper-vs-copy-ai-2026/",
+    niche_id: "writing",
+    primary_keyword: "jasper vs copy",
+    published_at: "2026-06-01",
+  },
+  {
+    id: "2",
+    title: "Best AI Writing Tools (2026)",
+    slug: "best-ai-writing-tools-2026",
+    language: "en",
+    wp_url: "https://aipickd.com/best-ai-writing-tools-2026/",
+    niche_id: "writing",
+    primary_keyword: "ai writing tools",
+    published_at: "2026-06-02",
+  },
+  {
+    id: "3",
+    title: "Cursor vs Copilot (2026)",
+    slug: "cursor-vs-copilot-2026",
+    language: "en",
+    wp_url: "https://aipickd.com/cursor-vs-copilot-2026/",
+    niche_id: "coding",
+    primary_keyword: "cursor vs copilot",
+    published_at: "2026-06-03",
+  },
+  {
+    id: "4",
+    title: "Mejores IA para escribir (2026)",
+    slug: "mejores-ia-escribir-2026",
+    language: "es",
+    wp_url: "https://aipickd.com/es/mejores-ia-escribir-2026/",
+    niche_id: "writing",
+    primary_keyword: "ia para escribir",
+    published_at: "2026-06-04",
+  },
 ];
 
 test("picks same-language related articles only", () => {

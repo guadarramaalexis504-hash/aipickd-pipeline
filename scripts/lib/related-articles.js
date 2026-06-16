@@ -12,12 +12,49 @@ const MARK_START = "<!-- aipickd-related:start -->";
 const MARK_END = "<!-- aipickd-related:end -->";
 
 const STOP = new Set([
-  "best", "review", "guide", "tools", "tool", "comparison", "compared", "tested",
-  "explained", "alternatives", "alternative", "free", "cheaper", "premium",
-  "writing", "video", "image", "coding", "business", "productivity", "small",
-  "team", "teams", "creators", "agencies", "2024", "2025", "2026", "para",
-  "mejor", "mejores", "herramientas", "herramienta", "gratis", "como", "cual",
-  "vs", "the", "for", "and", "with", "without", "your",
+  "best",
+  "review",
+  "guide",
+  "tools",
+  "tool",
+  "comparison",
+  "compared",
+  "tested",
+  "explained",
+  "alternatives",
+  "alternative",
+  "free",
+  "cheaper",
+  "premium",
+  "writing",
+  "video",
+  "image",
+  "coding",
+  "business",
+  "productivity",
+  "small",
+  "team",
+  "teams",
+  "creators",
+  "agencies",
+  "2024",
+  "2025",
+  "2026",
+  "para",
+  "mejor",
+  "mejores",
+  "herramientas",
+  "herramienta",
+  "gratis",
+  "como",
+  "cual",
+  "vs",
+  "the",
+  "for",
+  "and",
+  "with",
+  "without",
+  "your",
 ]);
 
 function tokenize(value) {
@@ -50,11 +87,7 @@ function pickRelatedArticles(article = {}, all = [], n = 4) {
   ]);
   return (all || [])
     .filter(
-      (x) =>
-        x &&
-        x.id !== selfId &&
-        (x.wp_url || x.slug) &&
-        normalizeLanguage(x.language) === lang
+      (x) => x && x.id !== selfId && (x.wp_url || x.slug) && normalizeLanguage(x.language) === lang
     )
     .map((x) => {
       const xTokens = new Set([
@@ -74,7 +107,8 @@ function pickRelatedArticles(article = {}, all = [], n = 4) {
 
 function buildRelatedBlock(related = [], language = "en") {
   if (!Array.isArray(related) || related.length === 0) return "";
-  const heading = normalizeLanguage(language) === "es" ? "Artículos relacionados" : "Related articles";
+  const heading =
+    normalizeLanguage(language) === "es" ? "Artículos relacionados" : "Related articles";
   const items = related
     .map((r) => {
       const url = r.wp_url || `https://aipickd.com/${r.slug}/`;

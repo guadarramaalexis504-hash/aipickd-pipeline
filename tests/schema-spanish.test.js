@@ -33,7 +33,13 @@ test("extractFAQs reads a Spanish 'Preguntas frecuentes' section", () => {
 
 test("buildSchemas emits FAQPage for a Spanish article", () => {
   const schemas = buildSchemas(
-    { title: "ChatGPT vs Claude vs Gemini (2026)", language: "es", article_type: "comparison", content_markdown: ES_FAQ_MD, meta_description: "Comparamos las IAs." },
+    {
+      title: "ChatGPT vs Claude vs Gemini (2026)",
+      language: "es",
+      article_type: "comparison",
+      content_markdown: ES_FAQ_MD,
+      meta_description: "Comparamos las IAs.",
+    },
     { url: "https://aipickd.com/es/chatgpt-vs-claude-vs-gemini-2026/" }
   );
   const types = schemas.map((s) => s["@type"]);
@@ -66,7 +72,13 @@ Arrastra los modulos, define el disparador y prueba el flujo antes de activarlo.
 ### ¿Make.com es gratis?
 Tiene un plan gratuito con operaciones limitadas y planes de pago para mas volumen.`;
   const schemas = buildSchemas(
-    { title: "Como usar Make.com en 2026", language: "es", article_type: "how-to", content_markdown: md, meta_description: "Guia paso a paso." },
+    {
+      title: "Como usar Make.com en 2026",
+      language: "es",
+      article_type: "how-to",
+      content_markdown: md,
+      meta_description: "Guia paso a paso.",
+    },
     { url: "https://aipickd.com/es/como-usar-make-2026/" }
   );
   const types = schemas.map((s) => s["@type"]);

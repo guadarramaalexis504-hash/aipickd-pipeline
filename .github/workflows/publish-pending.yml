@@ -68,8 +68,7 @@ jobs:
 
       - name: Publish pending drafts
         run: |
-          WRITE=""
-          if [ "${{ github.event.inputs.go }}" = "true" ]; then WRITE="--go"; fi
-          ONLY=""
-          if [ -n "${{ github.event.inputs.only }}" ]; then ONLY="--only ${{ github.event.inputs.only }}"; fi
-          node scripts/publish-pending-drafts.js --limit "${{ github.event.inputs.limit || '5' }}" $WRITE $ONLY
+          ARGS=(--limit "${{ github.event.inputs.limit || '5' }}")
+          if [ "${{ github.event.inputs.go }}" = "true" ]; then ARGS+=(--go); fi
+          if [ -n "${{ github.event.inputs.only }}" ]; then ARGS+=(--only "${{ github.event.inputs.only }}"); fi
+          node scripts/publish-pending-drafts.js "${ARGS[@]}"

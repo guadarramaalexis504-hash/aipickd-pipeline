@@ -221,7 +221,15 @@ function isTransientNetworkError(err) {
     err.name === "AbortError" ||
     err.name === "TypeError" || // undici "fetch failed"
     /fetch failed|network|timeout|socket hang up|ECONNRESET|terminated/i.test(err.message || "") ||
-    ["ECONNRESET", "ECONNREFUSED", "ETIMEDOUT", "EAI_AGAIN", "ENOTFOUND", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_SOCKET"].includes(code)
+    [
+      "ECONNRESET",
+      "ECONNREFUSED",
+      "ETIMEDOUT",
+      "EAI_AGAIN",
+      "ENOTFOUND",
+      "UND_ERR_CONNECT_TIMEOUT",
+      "UND_ERR_SOCKET",
+    ].includes(code)
   );
 }
 

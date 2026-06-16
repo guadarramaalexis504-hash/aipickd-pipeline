@@ -163,7 +163,11 @@ function deriveRating(qualityScore) {
 
 /** Home > [Category] > Title breadcrumb. Category level skipped if unknown. */
 function buildBreadcrumb({ categorySlug, title, url, language }) {
-  const homeName = String(language || "en").toLowerCase().startsWith("es") ? "Inicio" : "Home";
+  const homeName = String(language || "en")
+    .toLowerCase()
+    .startsWith("es")
+    ? "Inicio"
+    : "Home";
   const items = [{ "@type": "ListItem", position: 1, name: homeName, item: `${SITE}/` }];
   let pos = 2;
   if (categorySlug && CATEGORY_NAMES[categorySlug]) {
@@ -267,7 +271,10 @@ function buildSchemas(article, opts = {}) {
   const schemas = [base];
 
   // ── Breadcrumb (whenever we know the URL) ───────────────────────
-  if (url) schemas.push(buildBreadcrumb({ categorySlug, title: article.title, url, language: article.language }));
+  if (url)
+    schemas.push(
+      buildBreadcrumb({ categorySlug, title: article.title, url, language: article.language })
+    );
 
   // ── ItemList for listicles & comparisons ────────────────────────
   if (kind === "listicle" || kind === "comparison") {
