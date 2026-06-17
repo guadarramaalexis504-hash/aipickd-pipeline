@@ -26,6 +26,10 @@ const QUEUE_LOW_THRESHOLD = parseInt(process.env.QUEUE_LOW_THRESHOLD || "50");
 const args = process.argv.slice(2);
 const FORCE = args.includes("--force");
 const COUNT = parseInt(args[args.indexOf("--count") + 1]) || 20;
+// --lang es generates Spanish long-tail (Spanish SERPs are less saturated than
+// English, so they're often MORE winnable for a new site). Default: en.
+const LANG = args.includes("--lang") ? args[args.indexOf("--lang") + 1] || "en" : "en";
+const IS_ES = LANG === "es";
 
 // Article types and intents for keyword generation
 const ARTICLE_CONFIGS = [
@@ -66,11 +70,14 @@ async function gptJson(prompt) {
       messages: [
         {
           role: "system",
-          content:
-            "You are an SEO keyword researcher for a BRAND-NEW, ZERO-AUTHORITY website. " +
-            "A new site cannot rank for competitive head terms — only for ultra-specific, " +
-            "low-competition long-tail queries. You ONLY produce winnable long-tail keywords. " +
-            "Output JSON only.",
+          content: IS_ES
+            ? "Eres un investigador de keywords SEO para un sitio NUEVO sin autoridad, en ESPAÑOL (México/LatAm). " +
+              "Un sitio nuevo no puede rankear head-terms competidos — solo long-tail ultra-específico de baja " +
+              "competencia. SOLO produces long-tail ganable, todo en español natural. Devuelve SOLO JSON."
+            : "You are an SEO keyword researcher for a BRAND-NEW, ZERO-AUTHORITY website. " +
+              "A new site cannot rank for competitive head terms — only for ultra-specific, " +
+              "low-competition long-tail queries. You ONLY produce winnable long-tail keywords. " +
+              "Output JSON only.",
         },
         { role: "user", content: prompt },
       ],
@@ -126,8 +133,7 @@ async function gptJson(prompt) {
       .slice(0, Math.min(perNiche, types.length));
 
     try {
-      const result =
-        await gptJson(`Generate ${perNiche} ULTRA-SPECIFIC LONG-TAIL SEO keywords for a NEW, zero-authority website about AI tools, niche: "${niche.name}".
+      const promptEn = `Generate ${perNiche} ULTRA-SPECIFIC LONG-TAIL SEO keywords for a NEW, zero-authority website about AI tools, niche: "${niche.name}".
 
 CRITICAL CONTEXT: brand-new domain, NO authority. It CANNOT rank for competitive head terms. We need keywords where a new site can realistically reach Google page 1 — narrow, specific, low competition. Lower search volume is GOOD if it means we can actually rank and get clicks.
 
@@ -151,7 +157,35 @@ STRICT RULES:
 Existing keywords to AVOID:
 ${Array.from(existingSet).slice(0, 100).join(", ")}
 
-Return JSON: { "keywords": [ { "keyword": "string", "article_type": "comparison|list|review|how-to", "intent": "comparison|informational|review|how-to", "search_volume_estimate": 10-800, "competition": "low|medium" } ] }`);
+Return JSON: { "keywords": [ { "keyword": "string", "article_type": "comparison|list|review|how-to", "intent": "comparison|informational|review|how-to", "search_volume_estimate": 10-800, "competition": "low|medium" } ] }`;
+
+      const promptEs = `Genera ${perNiche} keywords SEO LONG-TAIL ultra-específicas EN ESPAÑOL (México/LatAm) para un sitio NUEVO sin autoridad sobre herramientas de IA, nicho: "${niche.name}".
+
+CONTEXTO CRÍTICO: dominio nuevo, SIN autoridad. NO puede rankear head-terms competidos. Necesitamos keywords donde un sitio nuevo SÍ pueda llegar a la página 1 de Google — específicas, de baja competencia. Menos volumen está BIEN si podemos rankear y obtener clics. El SEO en español suele tener MENOS competencia que en inglés — aprovéchalo.
+
+REGLAS ESTRICTAS:
+- Cada keyword DEBE tener 6-12 palabras: audiencia ESTRECHA + tarea ESTRECHA + idealmente una herramienta, restricción, precio o plataforma específica.
+- Favorece preguntas y problemas que una persona real teclea cuando está atorada.
+- TODO en ESPAÑOL natural (usa "tú", nunca "usted"). Intención real de resolver/comprar.
+- PROHIBIDO — NO generes esto, demasiado competido para un sitio nuevo:
+  * "mejores IA para [categoría amplia]", "top N herramientas de IA", "mejor IA para escribir/programar/hacer videos"
+  * cualquier head-term genérico de 3-5 palabras.
+- BUENOS ejemplos (ESTE es el estilo que queremos):
+  * "cómo quitar la marca de agua a imágenes generadas con IA gratis"
+  * "ChatGPT o Claude para escribir correos de venta en frío que respondan"
+  * "mejor IA gratis para hacer subtítulos de videos en español para YouTube"
+  * "cómo usar IA para crear miniaturas de YouTube sin saber diseñar"
+  * "app de IA barata para facturas de freelancer con presupuesto bajo"
+  * "cómo hacer que las imágenes de Midjourney no parezcan generadas con IA"
+- Para CADA keyword, juzga "competition": "low" o "medium". NUNCA "high" — si lo mejor que puedes es high, hazla más específica.
+- EVITA duplicados o casi-duplicados de las existentes abajo.
+
+Keywords existentes a EVITAR:
+${Array.from(existingSet).slice(0, 100).join(", ")}
+
+Devuelve JSON: { "keywords": [ { "keyword": "string", "article_type": "comparison|list|review|how-to", "intent": "comparison|informational|review|how-to", "search_volume_estimate": 10-800, "competition": "low|medium" } ] }`;
+
+      const result = await gptJson(IS_ES ? promptEs : promptEn);
 
       if (Array.isArray(result.keywords)) {
         for (const kw of result.keywords) {
@@ -162,11 +196,14 @@ Return JSON: { "keywords": [ { "keyword": "string", "article_type": "comparison|
           // long-tail keyword for a zero-authority site is specific (>=6 words)
           // and not a generic "best/top AI X tools" pattern a big site owns.
           const wordCount = normalized.split(/\s+/).filter(Boolean).length;
-          const isHeadTerm =
-            wordCount < 6 ||
-            /^(?:best|top)\s+\d*\s*ai\b/.test(normalized) ||
-            /\bbest\s+ai\s+\w+\s+tools?\b/.test(normalized) ||
-            /^top\s+\d+\s+ai\b/.test(normalized);
+          const isHeadTerm = IS_ES
+            ? wordCount < 5 ||
+              /^(?:la\s+|las\s+)?mejores?\s+(?:ia|herramientas?|apps?)\b/.test(normalized) ||
+              /^(?:top|mejor)\s+\d*\s*(?:ia|herramientas?)\b/.test(normalized)
+            : wordCount < 6 ||
+              /^(?:best|top)\s+\d*\s*ai\b/.test(normalized) ||
+              /\bbest\s+ai\s+\w+\s+tools?\b/.test(normalized) ||
+              /^top\s+\d+\s+ai\b/.test(normalized);
           if (isHeadTerm) continue;
           existingSet.add(normalized); // prevent self-duplicates within this batch
           const lowComp = String(kw.competition || "medium").toLowerCase() === "low";
@@ -176,6 +213,7 @@ Return JSON: { "keywords": [ { "keyword": "string", "article_type": "comparison|
           allNewKeywords.push({
             keyword: phrase,
             niche_id: niche.id,
+            language: LANG,
             intent: kw.intent || "informational",
             article_type: kw.article_type || "how-to",
             search_volume: Math.min(800, kw.search_volume_estimate || 120),
