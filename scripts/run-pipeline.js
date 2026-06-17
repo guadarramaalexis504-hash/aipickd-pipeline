@@ -726,9 +726,10 @@ Rules:
 6. Add a '**Key Takeaways**' bullet list right after the Quick Verdict.
 7. AVOID these exact AI-tell phrases: ${FORBIDDEN_AI_TELL_LIST}. Remove or replace every occurrence.
 8. Use 2nd person ("you"), active voice, contractions OK.
-9. ⚠️ MINIMUM 2000 WORDS — this is non-negotiable. Short sections must be expanded with examples.
+9. ⚠️ MINIMUM ${minWordsAfterEdit} WORDS. ${isConcise ? "This is a concise answer-first piece — meet the minimum but do NOT pad beyond what genuinely helps the reader." : "Short sections must be expanded with real examples — this is non-negotiable."}
 10. Cover EVERY section from the outline fully. DO NOT skip sections or write one-liners.
 11. End with a full "## FAQ" section answering all ${(outline.faqs || []).length} questions in detail (each answer min 3 sentences).
+12. ⚠️ INFORMATION GAIN (critical to actually get indexed by Google): include at least 2 things a generic competitor article would NOT have — a specific real-world scenario or workflow, an honest gotcha/limitation, a concrete "who should NOT use this", an exact price/spec the reader can act on, or a contrarian-but-true take. Restating marketing features = thin content Google won't index. Be specific and genuinely useful.
 12. NEVER leave generic placeholders such as "Tool A", "Tool B", "Tool C", "[Tool]", "[Nombre de herramienta]", "[Herramienta 1]", "[Producto 1]", "[Nombre]", "[Nombre de la app]", "[Nombre de IA]", or "Producto A". Use real product names in every heading, table, and recommendation.
 12a. For Spanish listicles, do not use English labels like "Quick Picks" or "Key fact"; use Spanish labels only. If the Spanish title promises 7 tools, write exactly 7 real named tools, one H2 per tool, and each tool must include what it does, one task example, approximate price or plan, pros, cons, and best use case.
 13. ⭐ CITATION CAPSULE (GEO/AEO requirement): EVERY H2 section (except FAQ) MUST end with a "Key fact" blockquote — exactly this format:
