@@ -631,6 +631,16 @@ Required sections (all mandatory):
       `ARTICLE TYPE: ${(kw.article_type || "guide").toUpperCase()}
 Ensure deep coverage with at least 8 substantive H2 sections.`;
 
+    // Length + structure adapt to search intent. Long-tail how-to queries are
+    // best served by a concise, answer-first article — Google's helpful-content
+    // system penalizes padded 3000-word filler. Listicles/comparisons warrant
+    // more depth. (qualityGate's too_short floor is 1100w, so concise stays
+    // comfortably above it.)
+    const isConcise = kw.article_type === "how-to";
+    const wordTarget = isConcise ? 1800 : 3000;
+    const minSections = isConcise ? 7 : 10;
+    const minWordsAfterEdit = isConcise ? 1300 : 2000;
+
     // Outline — try cache first (used when previous draft failed mid-generation)
     let outline = loadOutlineCache(kw.id);
     if (outline) {
@@ -644,13 +654,13 @@ Ensure deep coverage with at least 8 substantive H2 sections.`;
 Keyword: ${kw.keyword}
 Article type: ${kw.article_type}
 Intent: ${kw.intent}
-Target word count: 3000 (HARD MINIMUM: 2000 words after editing)
+Target word count: ${wordTarget} (HARD MINIMUM: ${minWordsAfterEdit} words after editing)
 Audience: Small business owners, marketers, creators evaluating AI tools.
 
 ${typeGuide}
-
+${isConcise ? "ANSWER-FIRST (how-to / long-tail): open with a DIRECT 2-3 sentence answer to the exact query BEFORE any preamble, then the steps. Be concise and practical — NO padding, NO filler sections. Google rewards the most direct helpful answer for these queries (and it wins featured snippets).\n" : ""}
 CRITICAL: All references must be 2026. If the keyword has a year, use 2026. Never use 2023, 2024, or 2025 as "current" — those are the past.
-CRITICAL: The outline MUST have at least 10 H2 sections. Each section must have word_target >= 250. Total word_targets must sum to 3000+.
+CRITICAL: The outline MUST have at least ${minSections} H2 sections. Each section must have word_target >= 250. Total word_targets must sum to ${wordTarget}+.
 CRITICAL: Include a dedicated "FAQ" section as the last H2 with 6 substantive questions.
 
 ${ES ? `${SPANISH_TITLE_BLOCK}\n\n${SPANISH_META_BLOCK}\n\n(Las reglas de TITLE ENGINEERING y de meta en ingles de abajo NO aplican a este articulo en espanol — usa solo las de arriba.)\n\n` : ""}TITLE ENGINEERING — the single biggest CTR lever (a flat title = zero clicks). Research-backed (Backlinko, Copyblogger):
@@ -671,7 +681,7 @@ BANNED — hype clichés (read as AI spam): "elevate", "unlock your potential", 
 SPANISH-SPECIFIC BANS: For Spanish articles, do NOT use "[Probadas]", "Probé", "Probamos", "We Tested", or "I Tried" unless the input includes real testing evidence. Use "Evaluadas", "Comparadas", or "Opciones reales" instead. Spanish headings must be Spanish-only.
 Good: "7 AI Writing Tools We Tested — Only 3 Actually Work [2026]"  ·  Bad: "Best AI Writing Tools 2026"
 
-Return a JSON object with keys: title (50-60 chars, high-CTR formula as described above), slug (kebab-case with "2026"), meta_description (150-160 chars, MUST follow these CTR rules: start with a benefit/result NOT "In this article" or "Learn about", include primary keyword in first 80 chars, end with curiosity hook or CTA like "See the results" or "Find out which wins", use a number or specific detail when possible. Example: "We tested 7 AI writing tools head-to-head. Here's which one actually delivers for small businesses in 2026."), primary_keyword, lsi_keywords (array of 5-7), target_word_count (must be 3000), article_type, sections (array of AT LEAST 10 objects with: heading, level, bullets array of 4-6 items, word_target number >= 250), faqs (array of 6 question strings), internal_link_ideas (array of strings).`,
+Return a JSON object with keys: title (50-60 chars, high-CTR formula as described above), slug (kebab-case with "2026"), meta_description (150-160 chars, MUST follow these CTR rules: start with a benefit/result NOT "In this article" or "Learn about", include primary keyword in first 80 chars, end with curiosity hook or CTA like "See the results" or "Find out which wins", use a number or specific detail when possible. Example: "We tested 7 AI writing tools head-to-head. Here's which one actually delivers for small businesses in 2026."), primary_keyword, lsi_keywords (array of 5-7), target_word_count (must be ${wordTarget}), article_type, sections (array of AT LEAST ${minSections} objects with: heading, level, bullets array of 4-6 items, word_target number >= 250), faqs (array of 6 question strings), internal_link_ideas (array of strings).`,
         2500,
         true
       );
@@ -705,7 +715,7 @@ ${typeGuide}
 
 WORD COUNT TARGETS PER SECTION (you MUST meet these):
 ${sectionTargets}
-TOTAL TARGET: 3000 words minimum — this is a HARD requirement. COUNT YOUR WORDS. If any section feels thin, add a real example, a comparison, specific numbers, or a mini case study. Thin sections (< 200 words) are NOT acceptable.
+TOTAL TARGET: ${wordTarget} words minimum — this is a HARD requirement. COUNT YOUR WORDS. ${isConcise ? "This is a concise answer-first piece — do NOT pad to hit a number; every sentence must earn its place." : "If any section feels thin, add a real example, a comparison, specific numbers, or a mini case study. Thin sections (< 200 words) are NOT acceptable."}
 
 Rules:
 1. Current date: April 2026. Use "As of April 2026..." framing for pricing and features. NEVER reference 2023, 2024, or 2025 as "current" — those are the past.

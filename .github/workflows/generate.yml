@@ -2,8 +2,11 @@ name: AIPickd Auto-Generation
 
 on:
   schedule:
-    # Every 4 hours UTC. ~6 articles/day.
-    - cron: "0 */4 * * *"
+    # Twice a day UTC (00:00 + 12:00). Deliberately SLOW: flooding Google with
+    # mass-produced AI listicles triggers "scaled content abuse" suppression
+    # (the 2026-06 diagnosis: 0 clicks / 304 pages not indexed). For a new,
+    # penalized domain, quality + winnable long-tail beats volume.
+    - cron: "0 */12 * * *"
   workflow_dispatch:
     inputs:
       gen_count:
@@ -77,12 +80,10 @@ jobs:
       - name: Run pipeline (generate + publish)
         id: run-pipeline
         run: |
-          DAY_OF_WEEK=$(date -u +%u)  # 1=Mon ... 6=Sat, 7=Sun
+          # One article per scheduled run (2/day). No weekend burst — flooding
+          # is what got the domain suppressed. Manual dispatch can still override.
           if [ -n "${{ github.event.inputs.gen_count }}" ]; then
             GEN="${{ github.event.inputs.gen_count }}"
-          elif [ "$DAY_OF_WEEK" -eq "6" ] || [ "$DAY_OF_WEEK" -eq "7" ]; then
-            GEN=2
-            echo "🗓️ Weekend burst mode: generating 2 articles (day $DAY_OF_WEEK)"
           else
             GEN=1
           fi
