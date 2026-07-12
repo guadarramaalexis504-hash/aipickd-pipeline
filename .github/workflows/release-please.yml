@@ -21,7 +21,7 @@ jobs:
     # setting and it works automatically — then this continue-on-error is a no-op.
     continue-on-error: true
     steps:
-      - uses: googleapis/release-please-action@v4
+      - uses: googleapis/release-please-action@v5
         with:
           release-type: node
           # Conventional Commits parsed from PR titles + commit messages.
